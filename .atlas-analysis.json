@@ -1,0 +1,227 @@
+{
+  "projectType": "sdk-library",
+  "projectName": "Effect",
+  "projectDescription": "A powerful TypeScript framework for building production-ready applications with a functional effect system",
+  "theme": "palm",
+  "primaryColor": "#7c3aed",
+  "lightColor": "#a78bfa",
+  "darkColor": "#5b21b6",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "core/effect-type",
+              "core/creating-effects",
+              "core/running-effects",
+              "core/error-handling",
+              "core/context-management",
+              "core/concurrency",
+              "core/resource-management"
+            ]
+          },
+          {
+            "group": "Essential Modules",
+            "pages": [
+              "modules/effect",
+              "modules/option",
+              "modules/either",
+              "modules/array",
+              "modules/stream",
+              "modules/fiber",
+              "modules/ref",
+              "modules/deferred",
+              "modules/queue",
+              "modules/schedule"
+            ]
+          },
+          {
+            "group": "Advanced Topics",
+            "pages": [
+              "advanced/layers",
+              "advanced/testing",
+              "advanced/observability",
+              "advanced/schema",
+              "advanced/interruption",
+              "advanced/custom-effects"
+            ]
+          },
+          {
+            "group": "Ecosystem",
+            "pages": [
+              "ecosystem/platform",
+              "ecosystem/cli",
+              "ecosystem/sql",
+              "ecosystem/rpc",
+              "ecosystem/opentelemetry",
+              "ecosystem/cluster",
+              "ecosystem/ai"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Core",
+            "pages": [
+              "api/effect",
+              "api/cause",
+              "api/context",
+              "api/exit",
+              "api/runtime",
+              "api/scope"
+            ]
+          },
+          {
+            "group": "Data Types",
+            "pages": [
+              "api/option",
+              "api/either",
+              "api/array",
+              "api/chunk",
+              "api/hashmap",
+              "api/hashset",
+              "api/list",
+              "api/redblacktree"
+            ]
+          },
+          {
+            "group": "Concurrency",
+            "pages": [
+              "api/fiber",
+              "api/fiberref",
+              "api/deferred",
+              "api/ref",
+              "api/semaphore",
+              "api/queue",
+              "api/pool"
+            ]
+          },
+          {
+            "group": "Streaming",
+            "pages": [
+              "api/stream",
+              "api/sink",
+              "api/channel",
+              "api/subscription"
+            ]
+          },
+          {
+            "group": "Scheduling",
+            "pages": [
+              "api/schedule",
+              "api/clock",
+              "api/duration",
+              "api/datetime",
+              "api/cron"
+            ]
+          },
+          {
+            "group": "Schema & Validation",
+            "pages": [
+              "api/schema",
+              "api/brand",
+              "api/predicate"
+            ]
+          },
+          {
+            "group": "Platform",
+            "pages": [
+              "api/platform/http",
+              "api/platform/filesystem",
+              "api/platform/command",
+              "api/platform/worker"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Guides",
+        "groups": [
+          {
+            "group": "Tutorials",
+            "pages": [
+              "guides/building-http-server",
+              "guides/database-integration",
+              "guides/cli-application",
+              "guides/error-handling-patterns",
+              "guides/streaming-data"
+            ]
+          },
+          {
+            "group": "Migration",
+            "pages": [
+              "guides/migration/from-promises",
+              "guides/migration/from-rxjs",
+              "guides/migration/v2-to-v3"
+            ]
+          },
+          {
+            "group": "Best Practices",
+            "pages": [
+              "guides/best-practices/project-structure",
+              "guides/best-practices/testing-strategies",
+              "guides/best-practices/performance-optimization",
+              "guides/best-practices/type-safety"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Type-safe error handling with comprehensive error tracking",
+    "First-class concurrency with fibers and structured concurrency",
+    "Dependency injection through Context and Layer system",
+    "Resource safety with automatic cleanup and interruption",
+    "Streaming data processing with backpressure support",
+    "Built-in testing utilities and property-based testing",
+    "OpenTelemetry integration for observability",
+    "Cross-platform runtime utilities for Node.js, Bun, and browsers"
+  ],
+  "publicApiSurface": [
+    "Effect - Core effect type and operations",
+    "Option - Type-safe optional values",
+    "Either - Error handling with typed errors",
+    "Array - Functional array operations",
+    "Stream - Streaming data processing",
+    "Schema - Runtime type validation and transformation",
+    "Layer - Dependency injection and service construction",
+    "Fiber - Lightweight concurrent execution",
+    "Ref - Concurrent mutable state",
+    "Queue - Asynchronous queues with backpressure",
+    "Schedule - Composable retry and repeat policies",
+    "Deferred - Promise-like concurrent primitives",
+    "Context - Dependency injection container",
+    "Cause - Structured error representation",
+    "Exit - Effect completion representation",
+    "Runtime - Effect execution environment",
+    "Chunk - Immutable array-like structure",
+    "HashMap - Immutable hash-based map",
+    "HashSet - Immutable hash-based set",
+    "Duration - Time duration operations",
+    "DateTime - Date and time utilities",
+    "Clock - Time service abstraction",
+    "Console - Console operations as effects",
+    "Random - Random value generation",
+    "Metric - Application metrics collection",
+    "Logger - Structured logging",
+    "Config - Configuration management",
+    "Brand - Branded types for type safety",
+    "Data - Algebraic data types",
+    "Match - Pattern matching utilities"
+  ]
+}
