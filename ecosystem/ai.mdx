@@ -1,0 +1,377 @@
+---
+title: "@effect/ai"
+description: "Effect modules for AI APIs and language models"
+---
+
+`@effect/ai` provides Effect-native integrations for popular AI services, enabling type-safe interactions with language models, embeddings, and other AI capabilities.
+
+## Installation
+
+<CodeGroup>
+```bash npm
+npm install @effect/ai @effect/platform
+```
+
+```bash pnpm
+pnpm add @effect/ai @effect/platform
+```
+
+```bash yarn
+yarn add @effect/ai @effect/platform
+```
+</CodeGroup>
+
+## Supported Providers
+
+Install provider-specific packages:
+
+<CardGroup cols={2}>
+  <Card title="OpenAI" icon="message-bot">
+    ```bash
+    npm install @effect/ai-openai
+    ```
+    GPT-4, GPT-3.5, embeddings, and more
+  </Card>
+  <Card title="Anthropic" icon="message-bot">
+    ```bash
+    npm install @effect/ai-anthropic
+    ```
+    Claude models and APIs
+  </Card>
+  <Card title="Google AI" icon="message-bot">
+    ```bash
+    npm install @effect/ai-google
+    ```
+    Gemini and Google AI services
+  </Card>
+  <Card title="Amazon Bedrock" icon="message-bot">
+    ```bash
+    npm install @effect/ai-amazon-bedrock
+    ```
+    AWS Bedrock foundation models
+  </Card>
+  <Card title="OpenRouter" icon="message-bot">
+    ```bash
+    npm install @effect/ai-openrouter
+    ```
+    Access multiple models via OpenRouter
+  </Card>
+</CardGroup>
+
+## OpenAI Quick Start
+
+```ts
+import { OpenAI } from "@effect/ai-openai"
+import { Effect } from "effect"
+
+const OpenAILive = OpenAI.layer({
+  apiKey: process.env.OPENAI_API_KEY!
+})
+
+const program = Effect.gen(function* () {
+  const ai = yield* OpenAI.OpenAI
+  
+  const completion = yield* ai.chat.completions.create({
+    model: "gpt-4",
+    messages: [
+      { role: "system", content: "You are a helpful assistant." },
+      { role: "user", content: "What is Effect?" }
+    ]
+  })
+  
+  yield* Effect.log(completion.choices[0].message.content)
+})
+
+Effect.runPromise(
+  program.pipe(Effect.provide(OpenAILive))
+)
+```
+
+## Streaming Responses
+
+Stream completions for real-time output:
+
+```ts
+import { OpenAI } from "@effect/ai-openai"
+import { Effect, Stream } from "effect"
+
+const streamCompletion = Effect.gen(function* () {
+  const ai = yield* OpenAI.OpenAI
+  
+  const stream = yield* ai.chat.completions.create({
+    model: "gpt-4",
+    messages: [{ role: "user", content: "Tell me a story" }],
+    stream: true
+  })
+  
+  yield* Stream.runForEach(stream, (chunk) =>
+    Effect.sync(() => {
+      const content = chunk.choices[0]?.delta?.content
+      if (content) process.stdout.write(content)
+    })
+  )
+})
+```
+
+## Embeddings
+
+Generate vector embeddings:
+
+```ts
+import { OpenAI } from "@effect/ai-openai"
+import { Effect } from "effect"
+
+const generateEmbeddings = (texts: string[]) =>
+  Effect.gen(function* () {
+    const ai = yield* OpenAI.OpenAI
+    
+    const response = yield* ai.embeddings.create({
+      model: "text-embedding-3-small",
+      input: texts
+    })
+    
+    return response.data.map(item => item.embedding)
+  })
+```
+
+## Anthropic Claude
+
+```ts
+import { Anthropic } from "@effect/ai-anthropic"
+import { Effect } from "effect"
+
+const AnthropicLive = Anthropic.layer({
+  apiKey: process.env.ANTHROPIC_API_KEY!
+})
+
+const program = Effect.gen(function* () {
+  const ai = yield* Anthropic.Anthropic
+  
+  const message = yield* ai.messages.create({
+    model: "claude-3-5-sonnet-20241022",
+    max_tokens: 1024,
+    messages: [
+      { role: "user", content: "Explain Effect in simple terms" }
+    ]
+  })
+  
+  yield* Effect.log(message.content[0].text)
+})
+
+Effect.runPromise(
+  program.pipe(Effect.provide(AnthropicLive))
+)
+```
+
+## Function Calling
+
+Use structured outputs and function calling:
+
+```ts
+import { OpenAI } from "@effect/ai-openai"
+import { Effect, Schema } from "effect"
+
+const GetWeather = Schema.Struct({
+  location: Schema.String,
+  unit: Schema.Literal("celsius", "fahrenheit")
+})
+
+const program = Effect.gen(function* () {
+  const ai = yield* OpenAI.OpenAI
+  
+  const completion = yield* ai.chat.completions.create({
+    model: "gpt-4",
+    messages: [
+      { role: "user", content: "What's the weather in Tokyo?" }
+    ],
+    tools: [
+      {
+        type: "function",
+        function: {
+          name: "get_weather",
+          description: "Get the weather for a location",
+          parameters: GetWeather
+        }
+      }
+    ]
+  })
+  
+  const toolCall = completion.choices[0].message.tool_calls?.[0]
+  if (toolCall) {
+    const args = JSON.parse(toolCall.function.arguments)
+    yield* Effect.log(`Fetching weather for ${args.location}`)
+  }
+})
+```
+
+## Schema Validation
+
+Combine with Effect schemas for type safety:
+
+```ts
+import { OpenAI } from "@effect/ai-openai"
+import { Effect, Schema } from "effect"
+
+class Movie extends Schema.Class<Movie>("Movie")({
+  title: Schema.String,
+  year: Schema.Number,
+  genre: Schema.String
+}) {}
+
+const extractMovie = (text: string) =>
+  Effect.gen(function* () {
+    const ai = yield* OpenAI.OpenAI
+    
+    const completion = yield* ai.chat.completions.create({
+      model: "gpt-4",
+      messages: [
+        { 
+          role: "system", 
+          content: "Extract movie information as JSON" 
+        },
+        { role: "user", content: text }
+      ],
+      response_format: { type: "json_object" }
+    })
+    
+    const content = completion.choices[0].message.content
+    const json = JSON.parse(content)
+    
+    return yield* Schema.decodeUnknown(Movie)(json)
+  })
+```
+
+## Token Management
+
+Track and manage token usage:
+
+```ts
+import { OpenAI } from "@effect/ai-openai"
+import { Effect, Ref } from "effect"
+
+const trackTokens = Effect.gen(function* () {
+  const ai = yield* OpenAI.OpenAI
+  const totalTokens = yield* Ref.make(0)
+  
+  const completion = yield* ai.chat.completions.create({
+    model: "gpt-4",
+    messages: [{ role: "user", content: "Hello!" }]
+  })
+  
+  const tokens = completion.usage?.total_tokens ?? 0
+  yield* Ref.update(totalTokens, (n) => n + tokens)
+  
+  const total = yield* Ref.get(totalTokens)
+  yield* Effect.log(`Total tokens used: ${total}`)
+})
+```
+
+## Error Handling
+
+Handle AI API errors gracefully:
+
+```ts
+import { OpenAI } from "@effect/ai-openai"
+import { Effect } from "effect"
+
+const robustCompletion = (prompt: string) =>
+  Effect.gen(function* () {
+    const ai = yield* OpenAI.OpenAI
+    
+    return yield* ai.chat.completions.create({
+      model: "gpt-4",
+      messages: [{ role: "user", content: prompt }]
+    })
+  }).pipe(
+    Effect.retry({ times: 3 }),
+    Effect.catchTag("RateLimitError", (error) =>
+      Effect.gen(function* () {
+        yield* Effect.sleep("5 seconds")
+        yield* Effect.log("Retrying after rate limit")
+        return yield* robustCompletion(prompt)
+      })
+    ),
+    Effect.catchAll((error) =>
+      Effect.gen(function* () {
+        yield* Effect.logError("AI request failed", error)
+        return yield* Effect.fail(error)
+      })
+    )
+  )
+```
+
+## Best Practices
+
+1. **Rate Limiting**: Implement backoff strategies for API limits
+2. **Caching**: Cache responses for repeated queries
+3. **Cost Control**: Monitor token usage and set limits
+4. **Error Recovery**: Handle transient failures with retries
+5. **Type Safety**: Use schemas for structured outputs
+6. **Streaming**: Use streaming for better UX on long responses
+
+## Example: RAG System
+
+Build a Retrieval-Augmented Generation system:
+
+```ts
+import { OpenAI } from "@effect/ai-openai"
+import { Effect } from "effect"
+
+interface Document {
+  content: string
+  embedding: number[]
+}
+
+const ragQuery = (query: string, documents: Document[]) =>
+  Effect.gen(function* () {
+    const ai = yield* OpenAI.OpenAI
+    
+    // 1. Generate query embedding
+    const queryEmbedding = yield* ai.embeddings.create({
+      model: "text-embedding-3-small",
+      input: query
+    })
+    
+    // 2. Find relevant documents (cosine similarity)
+    const relevant = findSimilar(
+      queryEmbedding.data[0].embedding,
+      documents
+    )
+    
+    // 3. Generate response with context
+    const completion = yield* ai.chat.completions.create({
+      model: "gpt-4",
+      messages: [
+        { 
+          role: "system", 
+          content: `Context:\n${relevant.map(d => d.content).join("\n")}` 
+        },
+        { role: "user", content: query }
+      ]
+    })
+    
+    return completion.choices[0].message.content
+  })
+
+function findSimilar(embedding: number[], docs: Document[]) {
+  // Implement cosine similarity search
+  return docs.slice(0, 3)
+}
+```
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="Introduction" href="https://effect.website/docs/ai/introduction">
+    Getting started guide
+  </Card>
+  <Card title="API Reference" href="https://effect-ts.github.io/effect/docs/ai/ai">
+    Complete API documentation
+  </Card>
+  <Card title="@effect/platform" href="/ecosystem/platform">
+    HTTP client for API requests
+  </Card>
+  <Card title="Effect Schema" href="/guides/schema">
+    Schema validation and parsing
+  </Card>
+</CardGroup>

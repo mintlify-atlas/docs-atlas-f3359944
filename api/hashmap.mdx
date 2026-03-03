@@ -1,0 +1,76 @@
+---
+title: HashMap
+description: API reference for the HashMap immutable map type
+---
+
+`HashMap` is an immutable hash-based map data structure.
+
+## Type Definition
+
+```typescript
+interface HashMap<K, V> extends Iterable<[K, V]>
+```
+
+## Constructors
+
+### empty
+
+Creates an empty `HashMap`.
+
+```typescript
+const empty: <K = never, V = never>() => HashMap<K, V>
+```
+
+### make
+
+Creates a `HashMap` from entries.
+
+```typescript
+const make: <Entries extends ReadonlyArray<readonly [any, any]>>(...entries: Entries) => HashMap<Entries[number][0], Entries[number][1]>
+```
+
+### fromIterable
+
+Creates a `HashMap` from an iterable of key-value pairs.
+
+```typescript
+const fromIterable: <K, V>(iterable: Iterable<readonly [K, V]>) => HashMap<K, V>
+```
+
+## Operations
+
+### set
+
+Sets a key-value pair.
+
+```typescript
+const set: <K, V>(key: K, value: V) => (self: HashMap<K, V>) => HashMap<K, V>
+```
+
+### get
+
+Retrieves a value by key.
+
+```typescript
+const get: <K>(key: K) => <V>(self: HashMap<K, V>) => Option<V>
+```
+
+### remove
+
+Removes a key.
+
+```typescript
+const remove: <K>(key: K) => <V>(self: HashMap<K, V>) => HashMap<K, V>
+```
+
+## Example
+
+```typescript
+import { HashMap } from "effect"
+
+const map = HashMap.make(["a", 1], ["b", 2]).pipe(
+  HashMap.set("c", 3)
+)
+
+console.log(HashMap.get(map, "b")) // Some(2)
+```

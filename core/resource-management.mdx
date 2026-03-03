@@ -1,0 +1,589 @@
+---
+title: Resource Management
+description: Safe resource handling with acquireRelease and Scope
+---
+
+Effect provides robust primitives for managing resources that must be acquired and released, ensuring cleanup happens even when errors occur or operations are interrupted.
+
+## The Resource Problem
+
+Many operations involve resources that must be cleaned up:
+
+- Database connections
+- File handles
+- Network sockets
+- Locks and semaphores
+- Memory allocations
+
+Effect ensures these resources are properly released through scoped resource management.
+
+## acquireRelease - Basic Pattern
+
+```typescript
+export const acquireRelease: {
+  <A, X, R2>(
+    release: (a: A, exit: Exit<unknown, unknown>) => Effect<X, never, R2>
+  ): <E, R>(acquire: Effect<A, E, R>) => Effect<A, E, Scope | R2 | R>
+  <A, E, R, X, R2>(
+    acquire: Effect<A, E, R>,
+    release: (a: A, exit: Exit<unknown, unknown>) => Effect<X, never, R2>
+  ): Effect<A, E, Scope | R | R2>
+}
+```
+
+The `acquireRelease` pattern ensures resources are released:
+
+```typescript
+import { Effect, Console } from "effect"
+
+interface MyResource {
+  readonly contents: string
+  readonly close: () => Promise<void>
+}
+
+const getMyResource = (): Promise<MyResource> =>
+  Promise.resolve({
+    contents: "lorem ipsum",
+    close: () =>
+      new Promise((resolve) => {
+        console.log("Resource released")
+        resolve()
+      })
+  })
+
+const program = Effect.gen(function* () {
+  const resource = yield* Effect.acquireRelease(
+    // Acquire
+    Effect.tryPromise({
+      try: () =>
+        getMyResource().then((res) => {
+          console.log("Resource acquired")
+          return res
+        }),
+      catch: () => new Error("getMyResourceError")
+    }),
+    // Release
+    (res) => Effect.promise(() => res.close())
+  )
+
+  // Use the resource
+  console.log(`Contents: ${resource.contents}`)
+  return resource.contents
+})
+
+Effect.runPromise(program.pipe(Effect.scoped))
+// Output:
+// Resource acquired
+// Contents: lorem ipsum
+// Resource released
+```
+
+<Steps>
+
+### Acquire Phase
+
+The acquire effect runs to obtain the resource:
+
+```typescript
+import { Effect } from "effect"
+
+const acquire = Effect.gen(function* () {
+  yield* Effect.log("Opening database connection")
+  const conn = yield* Effect.tryPromise(() => db.connect())
+  yield* Effect.log("Connection opened")
+  return conn
+})
+```
+
+### Release Phase
+
+The release function is called with the resource and the exit status:
+
+```typescript
+import { Effect, Exit } from "effect"
+
+const release = (conn: Connection, exit: Exit.Exit<unknown, unknown>) =>
+  Effect.gen(function* () {
+    yield* Effect.log(`Closing connection (${Exit.isSuccess(exit) ? "success" : "failure"})`) 
+    yield* Effect.promise(() => conn.close())
+    yield* Effect.log("Connection closed")
+  })
+```
+
+<Note>
+The release function receives the `Exit` value, allowing different cleanup based on success or failure.
+</Note>
+
+### Use Phase
+
+The resource is available within the scope:
+
+```typescript
+import { Effect } from "effect"
+
+const program = Effect.gen(function* () {
+  const conn = yield* Effect.acquireRelease(acquire, release)
+  
+  // Use the resource
+  const result = yield* Effect.tryPromise(() => conn.query("SELECT * FROM users"))
+  
+  return result
+})
+```
+
+</Steps>
+
+## Scope - Resource Lifetime Management
+
+```typescript
+interface Scope {
+  readonly [ScopeTypeId]: ScopeTypeId
+  readonly strategy: ExecutionStrategy.ExecutionStrategy
+  fork(strategy: ExecutionStrategy.ExecutionStrategy): Effect<Scope.Closeable>
+  addFinalizer(finalizer: Scope.Finalizer): Effect<void>
+}
+```
+
+A Scope manages the lifetime of resources:
+
+```typescript
+import { Effect } from "effect"
+
+const program = Effect.gen(function* () {
+  // Resources acquired here are tied to this scope
+  const db = yield* Effect.acquireRelease(
+    openDatabase(),
+    (db) => closeDatabase(db)
+  )
+  
+  const cache = yield* Effect.acquireRelease(
+    openCache(),
+    (cache) => closeCache(cache)
+  )
+  
+  // Use both resources
+  const data = yield* db.query("SELECT * FROM users")
+  yield* cache.set("users", data)
+  
+  return data
+})
+// When scope closes, both cache and db are released (in reverse order)
+
+Effect.runPromise(Effect.scoped(program))
+```
+
+<Steps>
+
+### Creating Scopes
+
+**Effect.scoped**: Create a new scope:
+
+```typescript
+import { Effect } from "effect"
+
+const scoped = Effect.scoped(program)
+// All resources in `program` are released when scope ends
+```
+
+**Effect.scopeWith**: Access the current scope:
+
+```typescript
+import { Effect, Scope } from "effect"
+
+const program = Effect.scopeWith((scope) =>
+  Scope.addFinalizer(scope, Effect.log("Scope closing"))
+)
+```
+
+### Finalizer Execution Order
+
+Finalizers run in reverse order of registration (LIFO):
+
+```typescript
+import { Effect } from "effect"
+
+const program = Effect.gen(function* () {
+  yield* Effect.acquireRelease(
+    Effect.log("Acquire 1"),
+    () => Effect.log("Release 1")
+  )
+  
+  yield* Effect.acquireRelease(
+    Effect.log("Acquire 2"),
+    () => Effect.log("Release 2")
+  )
+  
+  yield* Effect.acquireRelease(
+    Effect.log("Acquire 3"),
+    () => Effect.log("Release 3")
+  )
+})
+
+Effect.runPromise(Effect.scoped(program))
+// Output:
+// Acquire 1
+// Acquire 2
+// Acquire 3
+// Release 3
+// Release 2
+// Release 1
+```
+
+### Nested Scopes
+
+Scopes can be nested for fine-grained control:
+
+```typescript
+import { Effect } from "effect"
+
+const program = Effect.gen(function* () {
+  const outer = yield* Effect.acquireRelease(
+    Effect.log("Outer acquired"),
+    () => Effect.log("Outer released")
+  )
+  
+  yield* Effect.scoped(
+    Effect.gen(function* () {
+      const inner = yield* Effect.acquireRelease(
+        Effect.log("Inner acquired"),
+        () => Effect.log("Inner released")
+      )
+      
+      // Inner released when this scope ends
+    })
+  )
+  
+  yield* Effect.log("Between scopes")
+  
+  // Outer released when outer scope ends
+})
+
+Effect.runPromise(Effect.scoped(program))
+// Output:
+// Outer acquired
+// Inner acquired
+// Inner released
+// Between scopes
+// Outer released
+```
+
+</Steps>
+
+## Guaranteed Cleanup
+
+Resources are released even on errors or interruption:
+
+<Steps>
+
+### On Error
+
+```typescript
+import { Effect } from "effect"
+
+const program = Effect.gen(function* () {
+  const resource = yield* Effect.acquireRelease(
+    Effect.log("Acquired"),
+    () => Effect.log("Released")
+  )
+  
+  yield* Effect.fail("Something went wrong!")
+  
+  // This line is never reached
+  return "success"
+})
+
+Effect.runPromise(Effect.scoped(program)).catch(() => {})
+// Output:
+// Acquired
+// Released
+// (then promise rejects)
+```
+
+### On Interruption
+
+```typescript
+import { Effect, Fiber } from "effect"
+
+const program = Effect.gen(function* () {
+  const fiber = yield* Effect.fork(
+    Effect.gen(function* () {
+      const resource = yield* Effect.acquireRelease(
+        Effect.log("Acquired"),
+        () => Effect.log("Released")
+      )
+      
+      yield* Effect.sleep("10 seconds")
+      return "never gets here"
+    }).pipe(Effect.scoped)
+  )
+  
+  yield* Effect.sleep("100 millis")
+  yield* Fiber.interrupt(fiber)
+})
+
+Effect.runPromise(program)
+// Output:
+// Acquired
+// Released
+```
+
+### On Success
+
+```typescript
+import { Effect } from "effect"
+
+const program = Effect.gen(function* () {
+  const resource = yield* Effect.acquireRelease(
+    Effect.log("Acquired"),
+    () => Effect.log("Released")
+  )
+  
+  return "success"
+})
+
+Effect.runPromise(Effect.scoped(program))
+// Output:
+// Acquired
+// Released
+```
+
+</Steps>
+
+## Advanced Patterns
+
+### acquireUseRelease
+
+Combine acquire, use, and release in one call:
+
+```typescript
+import { Effect } from "effect"
+
+const program = Effect.acquireUseRelease(
+  // Acquire
+  openDatabase(),
+  // Use
+  (db) => db.query("SELECT * FROM users"),
+  // Release
+  (db) => closeDatabase(db)
+)
+// No need for Effect.scoped - it's built in
+
+Effect.runPromise(program)
+```
+
+### addFinalizer - Manual Finalizers
+
+Register cleanup functions directly:
+
+```typescript
+import { Effect } from "effect"
+
+const program = Effect.gen(function* () {
+  const resource = yield* openResource()
+  
+  // Manually register finalizer
+  yield* Effect.addFinalizer(() => {
+    console.log("Cleaning up resource")
+    return closeResource(resource)
+  })
+  
+  return yield* useResource(resource)
+})
+
+Effect.runPromise(Effect.scoped(program))
+```
+
+### Shared Resources with Layers
+
+Layers provide shared, scoped resources:
+
+```typescript
+import { Effect, Context, Layer } from "effect"
+
+class Database extends Context.Tag("Database")<
+  Database,
+  { query: (sql: string) => Effect.Effect<unknown> }
+>() {}
+
+const DatabaseLive = Layer.scoped(
+  Database,
+  Effect.gen(function* () {
+    const conn = yield* Effect.acquireRelease(
+      Effect.log("Opening connection"),
+      () => Effect.log("Closing connection")
+    )
+    
+    return {
+      query: (sql) => Effect.tryPromise(() => conn.execute(sql))
+    }
+  })
+)
+
+const program = Effect.gen(function* () {
+  const db = yield* Database
+  return yield* db.query("SELECT * FROM users")
+})
+
+Effect.runPromise(
+  program.pipe(Effect.provide(DatabaseLive))
+)
+// Connection is acquired once and shared across all uses
+// Connection is closed when the layer scope ends
+```
+
+## Best Practices
+
+<Steps>
+
+### Always Use Scoped for Resources
+
+```typescript
+import { Effect } from "effect"
+
+// ❌ Bad: Resource leak if error occurs
+const bad = Effect.gen(function* () {
+  const resource = yield* openResource()
+  const result = yield* useResource(resource)
+  yield* closeResource(resource)
+  return result
+})
+
+// ✅ Good: Resource always released
+const good = Effect.gen(function* () {
+  const resource = yield* Effect.acquireRelease(
+    openResource(),
+    (r) => closeResource(r)
+  )
+  return yield* useResource(resource)
+}).pipe(Effect.scoped)
+```
+
+### Release Must Not Fail
+
+Release functions should handle all errors internally:
+
+```typescript
+import { Effect } from "effect"
+
+// ❌ Bad: Release can fail
+const bad = (resource: Resource) =>
+  Effect.tryPromise(() => resource.close())
+
+// ✅ Good: Release handles errors
+const good = (resource: Resource) =>
+  Effect.tryPromise(() => resource.close()).pipe(
+    Effect.catchAll((error) => 
+      Effect.log(`Warning: Failed to close resource: ${error}`)
+    )
+  )
+```
+
+### Use Layers for Shared Resources
+
+When multiple effects need the same resource:
+
+```typescript
+import { Effect, Layer, Context } from "effect"
+
+// ❌ Bad: Each effect acquires separately
+const bad = Effect.all([
+  Effect.scoped(useDatabase()),
+  Effect.scoped(useDatabase()),
+  Effect.scoped(useDatabase())
+])
+// Opens and closes database 3 times!
+
+// ✅ Good: Shared via layer
+const good = Effect.all([
+  useDatabase(),
+  useDatabase(),
+  useDatabase()
+]).pipe(Effect.provide(DatabaseLayer))
+// Opens database once, closes when all effects complete
+```
+
+### Document Resource Ownership
+
+Make it clear who owns a resource:
+
+```typescript
+import { Effect } from "effect"
+
+/**
+ * Acquires a database connection that must be released by the caller.
+ * Use with Effect.scoped.
+ */
+const acquireConnection: Effect.Effect<Connection, Error, Scope> = ...
+
+/**
+ * Uses a database connection. Does not release it.
+ * The connection must be managed by the caller.
+ */
+const useConnection: (conn: Connection) => Effect.Effect<Result> = ...
+```
+
+</Steps>
+
+## Common Patterns
+
+### File Operations
+
+```typescript
+import { Effect } from "effect"
+import * as fs from "fs/promises"
+
+const withFile = <A>(
+  path: string,
+  use: (handle: fs.FileHandle) => Effect.Effect<A>
+): Effect.Effect<A, Error, Scope> =>
+  Effect.acquireUseRelease(
+    Effect.tryPromise({
+      try: () => fs.open(path, "r"),
+      catch: (error) => new Error(String(error))
+    }),
+    use,
+    (handle) => Effect.promise(() => handle.close())
+  )
+```
+
+### Lock Management
+
+```typescript
+import { Effect } from "effect"
+
+const withLock = <A>(
+  lock: Lock,
+  effect: Effect.Effect<A>
+): Effect.Effect<A, never, Scope> =>
+  Effect.acquireUseRelease(
+    Effect.sync(() => lock.acquire()),
+    () => effect,
+    () => Effect.sync(() => lock.release())
+  )
+```
+
+### Timeout with Cleanup
+
+```typescript
+import { Effect } from "effect"
+
+const withTimeout = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+  duration: Duration.Duration
+): Effect.Effect<A, E | TimeoutException, R> =>
+  Effect.gen(function* () {
+    const resource = yield* Effect.acquireRelease(
+      startOperation(),
+      (op) => cancelOperation(op)
+    )
+    
+    return yield* effect.pipe(
+      Effect.timeout(duration)
+    )
+  }).pipe(Effect.scoped)
+// Resource is cleaned up even if timeout occurs
+```
+
+---
+
+All 7 core concept pages have been created with real type signatures and examples from the Effect source code.

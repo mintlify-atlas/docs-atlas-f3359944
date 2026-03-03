@@ -1,0 +1,338 @@
+---
+title: Observability
+description: Monitor Effect applications with metrics, tracing, and structured logging
+---
+
+Effect provides built-in observability through metrics, distributed tracing, and structured logging.
+
+## Metrics
+
+### Counter
+
+Track cumulative values:
+
+```typescript
+import { Effect, Metric } from "effect"
+
+const requestCounter = Metric.counter("http_requests_total", {
+  description: "Total number of HTTP requests"
+})
+
+const program = Effect.gen(function*() {
+  // Increment counter
+  yield* Metric.increment(requestCounter)
+  
+  // Increment by specific amount
+  yield* Metric.incrementBy(requestCounter, 5)
+  
+  // Get current value
+  const count = yield* Metric.value(requestCounter)
+  console.log(`Total requests: ${count.count}`)
+})
+```
+
+### Gauge
+
+Track instantaneous values:
+
+```typescript
+import { Metric } from "effect"
+
+const memoryUsage = Metric.gauge("memory_usage_bytes", {
+  description: "Current memory usage in bytes"
+})
+
+// Set to specific value
+yield* Metric.set(memoryUsage, 1024 * 1024 * 512)
+
+// Increment/decrement
+yield* Metric.increment(memoryUsage)
+yield* Metric.incrementBy(memoryUsage, -100)
+```
+
+### Histogram
+
+Track distribution of values:
+
+```typescript
+import { Metric, MetricBoundaries } from "effect"
+
+const responseTime = Metric.histogram(
+  "http_response_time",
+  MetricBoundaries.linear({ start: 0, width: 100, count: 10 }),
+  "HTTP response time in milliseconds"
+)
+
+yield* Metric.update(responseTime, 150)
+yield* Metric.update(responseTime, 75)
+```
+
+### Summary
+
+Calculate quantiles over time:
+
+```typescript
+import { Metric } from "effect"
+
+const requestLatency = Metric.summary({
+  name: "request_latency",
+  maxAge: "60 seconds",
+  maxSize: 1000,
+  error: 0.01,
+  quantiles: [0.5, 0.9, 0.99],
+  description: "Request latency distribution"
+})
+
+yield* Metric.update(requestLatency, 42)
+```
+
+### Metric Aspects
+
+Automatically track effects:
+
+```typescript
+import { Effect, Metric } from "effect"
+
+const successCounter = Metric.counter("operations_success")
+const errorCounter = Metric.counter("operations_error")
+const duration = Metric.timer("operation_duration")
+
+const operation = Effect.succeed(42).pipe(
+  // Track duration
+  Metric.trackDuration(duration),
+  // Track success
+  Metric.trackSuccess(successCounter),
+  // Track errors
+  Metric.trackError(errorCounter)
+)
+```
+
+### Metric Labels
+
+Add dimensions to metrics:
+
+```typescript
+import { Metric } from "effect"
+
+const httpRequests = Metric.counter("http_requests").pipe(
+  Metric.tagged("method", "GET"),
+  Metric.tagged("status", "200")
+)
+
+// Dynamic labels based on input
+const requestsWithDynamicLabels = Metric.counter("http_requests_dynamic").pipe(
+  Metric.taggedWithLabelsInput((req: { method: string; path: string }) => [
+    Metric.label("method", req.method),
+    Metric.label("path", req.path)
+  ])
+)
+```
+
+## Tracing
+
+### Creating Spans
+
+```typescript
+import { Effect } from "effect"
+
+const fetchUser = (id: number) =>
+  Effect.succeed({ id, name: "Alice" }).pipe(
+    Effect.withSpan("fetchUser", { attributes: { userId: id } })
+  )
+
+const processUser = (user: { id: number; name: string }) =>
+  Effect.succeed(`Processed ${user.name}`).pipe(
+    Effect.withSpan("processUser")
+  )
+
+const program = Effect.gen(function*() {
+  const user = yield* fetchUser(123)
+  return yield* processUser(user)
+}).pipe(
+  Effect.withSpan("main-program")
+)
+```
+
+### Span Attributes
+
+Add context to spans:
+
+```typescript
+import { Effect } from "effect"
+
+const queryDatabase = (sql: string) =>
+  Effect.succeed({ rows: [] }).pipe(
+    Effect.withSpan("db.query", {
+      attributes: {
+        "db.statement": sql,
+        "db.system": "postgresql",
+        "db.operation": "SELECT"
+      }
+    })
+  )
+```
+
+### Parent Spans
+
+```typescript
+import { Effect, Tracer } from "effect"
+
+const program = Effect.gen(function*() {
+  // Get current span
+  const parentSpan = yield* Tracer.parentSpan
+  
+  // Create child span explicitly
+  yield* Effect.succeed("child operation").pipe(
+    Effect.withSpan("child", { parent: parentSpan })
+  )
+}).pipe(
+  Effect.withSpan("parent")
+)
+```
+
+<Warning>
+Tracing requires a Tracer implementation. Use `@effect/opentelemetry` for OpenTelemetry integration.
+</Warning>
+
+## Logging
+
+### Structured Logging
+
+```typescript
+import { Effect, Logger, LogLevel } from "effect"
+
+const program = Effect.gen(function*() {
+  // Different log levels
+  yield* Effect.log("Info message")
+  yield* Effect.logDebug("Debug details")
+  yield* Effect.logWarning("Warning!")
+  yield* Effect.logError("Error occurred")
+  
+  // With structured data
+  yield* Effect.log("User action").pipe(
+    Effect.annotateLogs("userId", "123"),
+    Effect.annotateLogs("action", "login")
+  )
+})
+```
+
+### Log Levels
+
+```typescript
+import { Effect, Logger, LogLevel } from "effect"
+
+// Set minimum log level
+const program = Effect.succeed("result").pipe(
+  Effect.provide(Logger.minimumLogLevel(LogLevel.Warning))
+)
+
+// Only warnings and errors will be logged
+```
+
+### Custom Logger
+
+```typescript
+import { Effect, Logger, Layer } from "effect"
+
+const JsonLogger = Logger.make(({ logLevel, message, annotations }) => {
+  const entry = {
+    timestamp: new Date().toISOString(),
+    level: logLevel.label,
+    message: String(message),
+    ...Object.fromEntries(annotations)
+  }
+  console.log(JSON.stringify(entry))
+})
+
+const program = Effect.log("Hello").pipe(
+  Effect.provide(Layer.setConfigProvider(JsonLogger))
+)
+```
+
+### Contextual Logging
+
+```typescript
+import { Effect, FiberRef } from "effect"
+
+const requestId = FiberRef.unsafeMake("unknown")
+
+const handleRequest = (id: string) =>
+  Effect.gen(function*() {
+    yield* FiberRef.set(requestId, id)
+    
+    yield* Effect.log("Processing request").pipe(
+      Effect.annotateLogs("requestId", id)
+    )
+    
+    // Nested operations inherit context
+    yield* processData()
+  })
+
+const processData = () =>
+  Effect.gen(function*() {
+    const id = yield* FiberRef.get(requestId)
+    yield* Effect.log("Processing data").pipe(
+      Effect.annotateLogs("requestId", id)
+    )
+  })
+```
+
+## Combining Observability
+
+```typescript
+import { Effect, Metric } from "effect"
+
+const requestCount = Metric.counter("http_requests")
+const errorCount = Metric.counter("http_errors")
+const requestDuration = Metric.timer("http_duration")
+
+const handleRequest = (req: Request) =>
+  Effect.gen(function*() {
+    yield* Effect.log("Handling request").pipe(
+      Effect.annotateLogs("method", req.method),
+      Effect.annotateLogs("path", req.url)
+    )
+    
+    const response = yield* processRequest(req)
+    
+    yield* Effect.log("Request completed").pipe(
+      Effect.annotateLogs("status", response.status)
+    )
+    
+    return response
+  }).pipe(
+    // Add metrics
+    Metric.trackDuration(requestDuration),
+    Metric.trackSuccess(requestCount),
+    Metric.trackError(errorCount),
+    // Add tracing
+    Effect.withSpan("http.request", {
+      attributes: {
+        "http.method": req.method,
+        "http.url": req.url
+      },
+      kind: "server"
+    })
+  )
+```
+
+## Metric Snapshots
+
+Capture current metric values:
+
+```typescript
+import { Effect, Metric } from "effect"
+
+const program = Effect.gen(function*() {
+  // Capture all metrics
+  const snapshot = yield* Metric.snapshot
+  
+  for (const pair of snapshot) {
+    console.log(`${pair.metricKey.name}: ${JSON.stringify(pair.metricState)}`)
+  }
+})
+```
+
+<Tip>
+Use `@effect/opentelemetry` to export metrics and traces to observability platforms like Prometheus, Jaeger, or Datadog.
+</Tip>

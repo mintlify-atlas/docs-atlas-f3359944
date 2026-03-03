@@ -1,0 +1,285 @@
+---
+title: Deferred
+description: Single-assignment asynchronous variables for fiber coordination
+---
+
+A `Deferred` represents an asynchronous variable that can be set exactly once, with the ability for multiple fibers to suspend and automatically resume when the variable is set.
+
+## Type Signature
+
+```typescript
+interface Deferred<in out A, in out E = never> extends Effect<A, E> {
+  readonly state: MutableRef<State<A, E>>
+  readonly blockingOn: FiberId
+}
+```
+
+`Deferred` is useful for building coordination primitives and higher-level concurrent structures.
+
+## Creating Deferreds
+
+### make
+
+Creates a new `Deferred`.
+
+```typescript
+import { Effect, Deferred } from "effect"
+
+const program = Effect.gen(function* () {
+  const deferred = yield* Deferred.make<number>()
+  console.log(deferred)
+})
+```
+
+## Completing a Deferred
+
+<Tabs>
+  <Tab title="succeed">
+    ```typescript
+    import { Effect, Deferred } from "effect"
+
+    const program = Effect.gen(function* () {
+      const deferred = yield* Deferred.make<number>()
+      yield* Deferred.succeed(deferred, 42)
+    })
+    ```
+  </Tab>
+  <Tab title="fail">
+    ```typescript
+    import { Effect, Deferred } from "effect"
+
+    const program = Effect.gen(function* () {
+      const deferred = yield* Deferred.make<number, string>()
+      yield* Deferred.fail(deferred, "error")
+    })
+    ```
+  </Tab>
+  <Tab title="complete">
+    ```typescript
+    import { Effect, Deferred } from "effect"
+
+    const program = Effect.gen(function* () {
+      const deferred = yield* Deferred.make<number>()
+      yield* Deferred.complete(deferred, Effect.succeed(42))
+    })
+    ```
+  </Tab>
+</Tabs>
+
+## Awaiting a Deferred
+
+### await
+
+Suspends until the `Deferred` is completed.
+
+```typescript
+import { Effect, Deferred } from "effect"
+
+const program = Effect.gen(function* () {
+  const deferred = yield* Deferred.make<number>()
+  
+  yield* Effect.fork(Effect.gen(function* () {
+    yield* Effect.sleep("1 second")
+    yield* Deferred.succeed(deferred, 42)
+  }))
+  
+  const value = yield* Deferred.await(deferred)
+  console.log(value)  // 42 (after 1 second)
+})
+```
+
+## Checking Completion
+
+### poll
+
+Checks if the `Deferred` has been completed without blocking.
+
+```typescript
+import { Effect, Deferred, Option } from "effect"
+
+const program = Effect.gen(function* () {
+  const deferred = yield* Deferred.make<number>()
+  
+  const before = yield* Deferred.poll(deferred)
+  console.log(Option.isNone(before))  // true
+  
+  yield* Deferred.succeed(deferred, 42)
+  
+  const after = yield* Deferred.poll(deferred)
+  if (Option.isSome(after)) {
+    const value = yield* after.value
+    console.log(value)  // 42
+  }
+})
+```
+
+### isDone
+
+Returns whether the `Deferred` has been completed.
+
+```typescript
+import { Effect, Deferred } from "effect"
+
+const program = Effect.gen(function* () {
+  const deferred = yield* Deferred.make<number>()
+  
+  const before = yield* Deferred.isDone(deferred)
+  console.log(before)  // false
+  
+  yield* Deferred.succeed(deferred, 42)
+  
+  const after = yield* Deferred.isDone(deferred)
+  console.log(after)  // true
+})
+```
+
+## Fiber Coordination
+
+```typescript
+import { Effect, Deferred, Fiber } from "effect"
+
+const program = Effect.gen(function* () {
+  const deferred = yield* Deferred.make<string>()
+  
+  const fiber1 = yield* Effect.fork(Effect.gen(function* () {
+    yield* Effect.sleep("2 seconds")
+    yield* Deferred.succeed(deferred, "Fiber 1 completed")
+  }))
+  
+  const fiber2 = yield* Effect.fork(Effect.gen(function* () {
+    const message = yield* Deferred.await(deferred)
+    yield* Effect.log(message)
+  }))
+  
+  yield* Fiber.join(fiber1)
+  yield* Fiber.join(fiber2)
+})
+
+Effect.runPromise(program)
+// Logs: "Fiber 1 completed" (after 2 seconds)
+```
+
+## Error Handling
+
+### failCause
+
+Completes the `Deferred` with a specific cause.
+
+```typescript
+import { Effect, Deferred, Cause } from "effect"
+
+const program = Effect.gen(function* () {
+  const deferred = yield* Deferred.make<number, string>()
+  
+  yield* Deferred.failCause(
+    deferred,
+    Cause.fail("Something went wrong")
+  )
+  
+  const result = yield* Deferred.await(deferred).pipe(
+    Effect.catchAll(error => Effect.succeed(`Error: ${error}`))
+  )
+  
+  console.log(result)  // "Error: Something went wrong"
+})
+```
+
+### interrupt
+
+Interrupts all fibers waiting on the `Deferred`.
+
+```typescript
+import { Effect, Deferred } from "effect"
+
+const program = Effect.gen(function* () {
+  const deferred = yield* Deferred.make<number>()
+  
+  const fiber = yield* Effect.fork(
+    Deferred.await(deferred)
+  )
+  
+  yield* Effect.sleep("1 second")
+  yield* Deferred.interrupt(deferred)
+  
+  const result = yield* Fiber.await(fiber)
+  console.log(result)  // Interrupted exit
+})
+```
+
+## Producer-Consumer Pattern
+
+```typescript
+import { Effect, Deferred, Fiber } from "effect"
+
+const makeProducer = (deferred: Deferred.Deferred<number>) =>
+  Effect.gen(function* () {
+    yield* Effect.sleep("1 second")
+    const value = Math.random() * 100
+    yield* Deferred.succeed(deferred, value)
+    return value
+  })
+
+const makeConsumer = (deferred: Deferred.Deferred<number>) =>
+  Effect.gen(function* () {
+    const value = yield* Deferred.await(deferred)
+    yield* Effect.log(`Consumed: ${value}`)
+    return value
+  })
+
+const program = Effect.gen(function* () {
+  const deferred = yield* Deferred.make<number>()
+  
+  const producer = yield* Effect.fork(makeProducer(deferred))
+  const consumer = yield* Effect.fork(makeConsumer(deferred))
+  
+  yield* Fiber.join(producer)
+  yield* Fiber.join(consumer)
+})
+
+Effect.runPromise(program)
+```
+
+## Completing Once
+
+```typescript
+import { Effect, Deferred } from "effect"
+
+const program = Effect.gen(function* () {
+  const deferred = yield* Deferred.make<number>()
+  
+  const first = yield* Deferred.succeed(deferred, 42)
+  console.log(first)  // true
+  
+  const second = yield* Deferred.succeed(deferred, 100)
+  console.log(second)  // false (already completed)
+  
+  const value = yield* Deferred.await(deferred)
+  console.log(value)  // 42
+})
+```
+
+<Note>
+A `Deferred` can only be completed once. Subsequent completion attempts return `false` and have no effect on the stored value.
+</Note>
+
+## Use Cases
+
+- Coordinating multiple fibers
+- Implementing one-time events
+- Building synchronization primitives
+- Request-response patterns
+- Signaling between concurrent tasks
+
+## Key Operations
+
+| Operation | Description |
+|-----------|-------------|
+| `make` | Creates a new Deferred |
+| `await` | Waits for completion |
+| `succeed` | Completes with success |
+| `fail` | Completes with failure |
+| `complete` | Completes with an effect |
+| `poll` | Checks completion without blocking |
+| `isDone` | Returns completion status |
+| `interrupt` | Interrupts waiting fibers |
+| `done` | Completes with an Exit |

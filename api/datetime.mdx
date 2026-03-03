@@ -1,0 +1,88 @@
+---
+title: DateTime
+description: API reference for the DateTime type - date and time utilities
+---
+
+`DateTime` provides utilities for working with dates and times.
+
+## Type Definition
+
+```typescript
+interface DateTime {
+  readonly _id: 'DateTime'
+  readonly epochMillis: number
+}
+```
+
+## Constructors
+
+### now
+
+Gets the current DateTime.
+
+```typescript
+const now: Effect<DateTime>
+```
+
+### make
+
+Creates a DateTime from components.
+
+```typescript
+const make: (options: {
+  year: number
+  month: number
+  day: number
+  hours?: number
+  minutes?: number
+  seconds?: number
+}) => DateTime
+```
+
+### fromDate
+
+Creates a DateTime from a JavaScript Date.
+
+```typescript
+const fromDate: (date: Date) => DateTime
+```
+
+## Operations
+
+### toDate
+
+Converts a DateTime to a JavaScript Date.
+
+```typescript
+const toDate: (self: DateTime) => Date
+```
+
+### format
+
+Formats a DateTime as a string.
+
+```typescript
+const format: (format: string) => (self: DateTime) => string
+```
+
+### add
+
+Adds a duration to a DateTime.
+
+```typescript
+const add: (duration: Duration) => (self: DateTime) => DateTime
+```
+
+## Example
+
+```typescript
+import { DateTime, Duration, Effect } from "effect"
+
+const program = Effect.gen(function* () {
+  const now = yield* DateTime.now
+  const tomorrow = now.pipe(
+    DateTime.add(Duration.days(1))
+  )
+  console.log(DateTime.toDate(tomorrow))
+})
+```

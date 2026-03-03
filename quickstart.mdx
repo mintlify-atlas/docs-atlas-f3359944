@@ -1,80 +1,190 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart
+description: Get started with Effect in 5 minutes - install, write your first program, and run it
 ---
 
-## Get started in three steps
+This quickstart will get you up and running with Effect in minutes. You'll install the library, write your first Effect program, and learn the basics of running effects.
 
-Get your documentation site running locally and make your first customization.
+## Installation
 
-### Step 1: Set up your local environment
+Install Effect using your preferred package manager:
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+<CodeGroup>
+```bash npm
+npm install effect
+```
 
-### Step 2: Deploy your changes
+```bash pnpm
+pnpm add effect
+```
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+```bash yarn
+yarn add effect
+```
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
-
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 3: Go live
-
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
-
-## Next steps
-
-Now that you have your docs running, explore these key features:
-
-<CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
-</CardGroup>
+```bash bun
+bun add effect
+```
+</CodeGroup>
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+  Effect requires TypeScript 5.4 or newer. Make sure to enable `strict` mode in your `tsconfig.json`.
 </Note>
+
+## Your First Effect Program
+
+Effect programs are built using the `Effect.gen` function, which provides a generator-based syntax similar to async/await:
+
+<Steps>
+  <Step title="Create an Effect">
+    Create a simple effect that performs a computation:
+
+    ```typescript
+    import { Effect } from "effect"
+
+    const hello = Effect.gen(function* () {
+      const message = yield* Effect.succeed("Hello, Effect!")
+      return message.toUpperCase()
+    })
+    ```
+
+    The `Effect.succeed` creates an effect that always succeeds with the given value. The `yield*` keyword unwraps the value from the effect.
+  </Step>
+
+  <Step title="Run the Effect">
+    Execute your effect using `Effect.runPromise`:
+
+    ```typescript
+    Effect.runPromise(hello).then(console.log)
+    // Output: HELLO, EFFECT!
+    ```
+
+    `Effect.runPromise` runs the effect and returns a Promise with the result.
+  </Step>
+
+  <Step title="Add Error Handling">
+    Effect makes error handling explicit and type-safe:
+
+    ```typescript
+    import { Effect } from "effect"
+
+    const divide = (a: number, b: number) =>
+      Effect.gen(function* () {
+        if (b === 0) {
+          return yield* Effect.fail("Division by zero")
+        }
+        return a / b
+      })
+
+    // Success case
+    Effect.runPromise(divide(10, 2)).then(console.log)
+    // Output: 5
+
+    // Error case
+    Effect.runPromise(divide(10, 0)).catch(console.error)
+    // Output: (FiberFailure) Error: Division by zero
+    ```
+
+    The type signature `Effect<number, string, never>` tells you:
+    - Returns a `number` on success
+    - Fails with a `string` error
+    - Requires no dependencies (`never`)
+  </Step>
+
+  <Step title="Compose Multiple Effects">
+    Chain effects together naturally using `yield*`:
+
+    ```typescript
+    import { Effect, Console } from "effect"
+
+    const program = Effect.gen(function* () {
+      yield* Console.log("Starting computation...")
+      
+      const x = yield* Effect.succeed(10)
+      const y = yield* Effect.succeed(20)
+      const result = yield* divide(x + y, 2)
+      
+      yield* Console.log(`Result: ${result}`)
+      return result
+    })
+
+    Effect.runPromise(program).then(console.log)
+    // Output:
+    // Starting computation...
+    // Result: 15
+    // 15
+    ```
+  </Step>
+</Steps>
+
+## Working with Promises
+
+Effect makes it easy to work with existing Promise-based code:
+
+```typescript
+import { Effect } from "effect"
+
+// Convert a Promise to an Effect
+const fetchData = Effect.tryPromise({
+  try: () => fetch("https://api.example.com/data").then(r => r.json()),
+  catch: (error) => new Error(`Failed to fetch: ${error}`)
+})
+
+const program = Effect.gen(function* () {
+  const data = yield* fetchData
+  return data
+})
+
+Effect.runPromise(program).then(console.log).catch(console.error)
+```
+
+The `tryPromise` function converts a Promise into an Effect, allowing you to specify how to handle rejection errors.
+
+## Error Recovery
+
+Effect provides powerful error recovery operators:
+
+```typescript
+import { Effect } from "effect"
+
+const task = Effect.gen(function* () {
+  return yield* Effect.fail("Something went wrong")
+})
+
+// Provide a fallback value
+const recovered = task.pipe(
+  Effect.catchAll(() => Effect.succeed("Fallback value"))
+)
+
+Effect.runPromise(recovered).then(console.log)
+// Output: Fallback value
+```
+
+## Next Steps
+
+Now that you've written your first Effect program, explore these topics:
+
+<CardGroup cols={2}>
+  <Card title="Error Handling" icon="triangle-exclamation" href="/essentials/error-handling">
+    Master type-safe error handling patterns
+  </Card>
+  
+  <Card title="Concurrency" icon="arrows-split" href="/essentials/concurrency">
+    Learn about fibers and concurrent execution
+  </Card>
+  
+  <Card title="Dependency Injection" icon="plug" href="/essentials/context-management">
+    Build modular applications with Context and Layer
+  </Card>
+  
+  <Card title="Resource Management" icon="lock" href="/essentials/resource-management">
+    Safely manage resources with automatic cleanup
+  </Card>
+</CardGroup>
+
+<Tip>
+  The Effect type signature `Effect<A, E, R>` is your guide:
+  - `A`: What succeeds
+  - `E`: What fails
+  - `R`: What's required
+</Tip>

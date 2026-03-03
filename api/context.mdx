@@ -1,0 +1,402 @@
+---
+title: Context
+description: Context.Tag and Context operations for dependency injection
+---
+
+The `Context` module provides a data structure for dependency injection in effectful programs. It's a type-safe table mapping `Tag`s to their service implementations.
+
+## Types
+
+### Context
+
+```ts
+interface Context<in Services>
+```
+
+A context is a collection of services indexed by tags.
+
+<ParamField path="Services" type="type parameter">
+  The union of service identifiers available in this context
+</ParamField>
+
+### Tag
+
+```ts
+interface Tag<in out Id, in out Value>
+```
+
+A tag identifies a service in the context.
+
+<ParamField path="Id" type="type parameter">
+  The unique identifier for this service
+</ParamField>
+
+<ParamField path="Value" type="type parameter">
+  The service implementation type
+</ParamField>
+
+## Constructors
+
+### empty
+
+Returns an empty `Context`.
+
+```ts
+const empty: () => Context<never>
+```
+
+<ResponseField name="return" type="Context<never>">
+  An empty context with no services
+</ResponseField>
+
+```ts
+import { Context } from "effect"
+
+const ctx = Context.empty()
+```
+
+### make
+
+Creates a new `Context` with a single service.
+
+```ts
+const make: <I, S>(tag: Tag<I, S>, service: S) => Context<I>
+```
+
+<ParamField path="tag" type="Tag<I, S>" required>
+  The service tag
+</ParamField>
+
+<ParamField path="service" type="S" required>
+  The service implementation
+</ParamField>
+
+<ResponseField name="return" type="Context<I>">
+  A context containing the single service
+</ResponseField>
+
+```ts
+import { Context } from "effect"
+
+const Port = Context.GenericTag<{ PORT: number }>("Port")
+const ctx = Context.make(Port, { PORT: 8080 })
+```
+
+### GenericTag
+
+Creates a new `Tag` with an optional key parameter.
+
+```ts
+const GenericTag: <Identifier, Service = Identifier>(key: string) => Tag<Identifier, Service>
+```
+
+<ParamField path="key" type="string" required>
+  The unique key for this tag
+</ParamField>
+
+<ResponseField name="return" type="Tag<Identifier, Service>">
+  A new tag instance
+</ResponseField>
+
+```ts
+import { Context } from "effect"
+
+const Database = Context.GenericTag<{ query: (sql: string) => string }>("Database")
+```
+
+### Tag
+
+Creates a tag class for defining services.
+
+```ts
+const Tag: <const Id extends string>(id: Id) => <Self, Shape>() => TagClass<Self, Id, Shape>
+```
+
+<ParamField path="id" type="string" required>
+  The unique identifier for the tag
+</ParamField>
+
+<ResponseField name="return" type="TagClass constructor">
+  A tag class that can be extended
+</ResponseField>
+
+```ts
+import { Context } from "effect"
+
+class MyService extends Context.Tag("MyService")<
+  MyService,
+  { readonly value: number }
+>() {}
+```
+
+### Reference
+
+Creates a context tag with a default value.
+
+```ts
+const Reference: <Self>() => <const Id extends string, Service>(
+  id: Id,
+  options: { readonly defaultValue: () => Service }
+) => ReferenceClass<Self, Id, Service>
+```
+
+<ParamField path="id" type="string" required>
+  The unique identifier
+</ParamField>
+
+<ParamField path="options.defaultValue" type="() => Service" required>
+  Function providing the default value
+</ParamField>
+
+<ResponseField name="return" type="ReferenceClass">
+  A reference that provides a default value
+</ResponseField>
+
+```ts
+import { Context, Effect } from "effect"
+
+class SpecialNumber extends Context.Reference<SpecialNumber>()(
+  "SpecialNumber",
+  { defaultValue: () => 2048 }
+) {}
+
+const program = Effect.gen(function* () {
+  const num = yield* SpecialNumber
+  console.log(num) // 2048
+})
+```
+
+<Note>
+  References are useful for optional services that have sensible defaults.
+</Note>
+
+## Operations
+
+### add
+
+Adds a service to a context.
+
+```ts
+const add: {
+  <I, S>(tag: Tag<I, S>, service: S): <Services>(self: Context<Services>) => Context<Services | I>
+  <Services, I, S>(self: Context<Services>, tag: Tag<I, S>, service: S): Context<Services | I>
+}
+```
+
+<ParamField path="self" type="Context<Services>" required>
+  The existing context
+</ParamField>
+
+<ParamField path="tag" type="Tag<I, S>" required>
+  The service tag
+</ParamField>
+
+<ParamField path="service" type="S" required>
+  The service implementation
+</ParamField>
+
+<ResponseField name="return" type="Context<Services | I>">
+  A new context with the added service
+</ResponseField>
+
+```ts
+import { Context, pipe } from "effect"
+
+const Port = Context.GenericTag<{ PORT: number }>("Port")
+const Timeout = Context.GenericTag<{ TIMEOUT: number }>("Timeout")
+
+const ctx = pipe(
+  Context.make(Port, { PORT: 8080 }),
+  Context.add(Timeout, { TIMEOUT: 5000 })
+)
+```
+
+### get
+
+Retrieves a service from the context.
+
+```ts
+const get: {
+  <I, S>(tag: Reference<I, S>): <Services>(self: Context<Services>) => S
+  <Services, I extends Services, S>(tag: Tag<I, S>): (self: Context<Services>) => S
+  <Services, I, S>(self: Context<Services>, tag: Reference<I, S>): S
+  <Services, I extends Services, S>(self: Context<Services>, tag: Tag<I, S>): S
+}
+```
+
+<ParamField path="self" type="Context<Services>" required>
+  The context to get from
+</ParamField>
+
+<ParamField path="tag" type="Tag<I, S>" required>
+  The tag identifying the service
+</ParamField>
+
+<ResponseField name="return" type="S">
+  The service implementation
+</ResponseField>
+
+```ts
+import { Context } from "effect"
+
+const Port = Context.GenericTag<{ PORT: number }>("Port")
+const ctx = Context.make(Port, { PORT: 8080 })
+
+const port = Context.get(ctx, Port)
+// { PORT: 8080 }
+```
+
+### getOption
+
+Retrieves a service wrapped in an `Option`.
+
+```ts
+const getOption: {
+  <S, I>(tag: Tag<I, S>): <Services>(self: Context<Services>) => Option<S>
+  <Services, S, I>(self: Context<Services>, tag: Tag<I, S>): Option<S>
+}
+```
+
+<ParamField path="self" type="Context<Services>" required>
+  The context to get from
+</ParamField>
+
+<ParamField path="tag" type="Tag<I, S>" required>
+  The tag identifying the service
+</ParamField>
+
+<ResponseField name="return" type="Option<S>">
+  `Some(service)` if present, `None` otherwise
+</ResponseField>
+
+```ts
+import { Context, Option } from "effect"
+
+const Port = Context.GenericTag<{ PORT: number }>("Port")
+const ctx = Context.empty()
+
+const maybePort = Context.getOption(ctx, Port)
+// Option.none()
+```
+
+### merge
+
+Merges two contexts.
+
+```ts
+const merge: {
+  <R1>(that: Context<R1>): <Services>(self: Context<Services>) => Context<R1 | Services>
+  <Services, R1>(self: Context<Services>, that: Context<R1>): Context<Services | R1>
+}
+```
+
+<ParamField path="self" type="Context<Services>" required>
+  The first context
+</ParamField>
+
+<ParamField path="that" type="Context<R1>" required>
+  The second context
+</ParamField>
+
+<ResponseField name="return" type="Context<Services | R1>">
+  A context containing services from both
+</ResponseField>
+
+```ts
+import { Context } from "effect"
+
+const Port = Context.GenericTag<{ PORT: number }>("Port")
+const Timeout = Context.GenericTag<{ TIMEOUT: number }>("Timeout")
+
+const ctx1 = Context.make(Port, { PORT: 8080 })
+const ctx2 = Context.make(Timeout, { TIMEOUT: 5000 })
+
+const merged = Context.merge(ctx1, ctx2)
+```
+
+### pick
+
+Returns a new `Context` containing only specified services.
+
+```ts
+const pick: <Tags extends ReadonlyArray<Tag<any, any>>>(
+  ...tags: Tags
+) => <Services>(self: Context<Services>) => Context<Services & Tag.Identifier<Tags[number]>>
+```
+
+<ParamField path="tags" type="Tag[]" required>
+  The tags to keep
+</ParamField>
+
+<ParamField path="self" type="Context<Services>" required>
+  The source context
+</ParamField>
+
+<ResponseField name="return" type="Context<...>">
+  A context with only the picked services
+</ResponseField>
+
+```ts
+import { Context, pipe } from "effect"
+
+const Port = Context.GenericTag<{ PORT: number }>("Port")
+const Timeout = Context.GenericTag<{ TIMEOUT: number }>("Timeout")
+
+const ctx = pipe(
+  Context.make(Port, { PORT: 8080 }),
+  Context.add(Timeout, { TIMEOUT: 5000 })
+)
+
+const onlyPort = pipe(ctx, Context.pick(Port))
+```
+
+### omit
+
+Returns a new `Context` excluding specified services.
+
+```ts
+const omit: <Tags extends ReadonlyArray<Tag<any, any>>>(
+  ...tags: Tags
+) => <Services>(self: Context<Services>) => Context<Exclude<Services, Tag.Identifier<Tags[number]>>>
+```
+
+## Guards
+
+### isContext
+
+Checks if a value is a `Context`.
+
+```ts
+const isContext: (input: unknown) => input is Context<never>
+```
+
+<ParamField path="input" type="unknown" required>
+  The value to check
+</ParamField>
+
+<ResponseField name="return" type="boolean">
+  `true` if the value is a Context
+</ResponseField>
+
+```ts
+import { Context } from "effect"
+
+Context.isContext(Context.empty()) // true
+Context.isContext({}) // false
+```
+
+### isTag
+
+Checks if a value is a `Tag`.
+
+```ts
+const isTag: (input: unknown) => input is Tag<any, any>
+```
+
+### isReference
+
+Checks if a value is a `Reference`.
+
+```ts
+const isReference: (u: unknown) => u is Reference<any, any>
+```

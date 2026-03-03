@@ -1,0 +1,244 @@
+---
+title: Installation
+description: Complete guide to installing and configuring Effect in your TypeScript project
+---
+
+This guide walks you through installing Effect and configuring your development environment for the best experience.
+
+## System Requirements
+
+Before installing Effect, ensure your environment meets these requirements:
+
+- **Node.js**: Version 18 or newer
+- **TypeScript**: Version 5.4 or newer
+- **Package Manager**: npm, pnpm, yarn, or bun
+
+<Note>
+  Effect takes full advantage of TypeScript's type system and requires strict type checking to be enabled.
+</Note>
+
+## Installing Effect
+
+Install the `effect` package using your preferred package manager:
+
+<CodeGroup>
+```bash npm
+npm install effect
+```
+
+```bash pnpm
+pnpm add effect
+```
+
+```bash yarn
+yarn add effect
+```
+
+```bash bun
+bun add effect
+```
+</CodeGroup>
+
+The `effect` package includes:
+- Core Effect runtime and data types
+- Context and Layer for dependency injection
+- Fiber-based concurrency primitives
+- Stream for reactive programming
+- Schema for validation and parsing
+- And much more
+
+## TypeScript Configuration
+
+Effect requires strict type-checking to ensure type safety. Update your `tsconfig.json` to include these settings:
+
+```json tsconfig.json
+{
+  "compilerOptions": {
+    "strict": true,
+    "moduleResolution": "bundler",
+    "module": "ESNext",
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "skipLibCheck": true
+  }
+}
+```
+
+### Configuration Explained
+
+<AccordionGroup>
+  <Accordion title="strict: true">
+    Enables all strict type-checking options. This is **required** for Effect to work correctly. It includes:
+    - `strictNullChecks`: Ensures `null` and `undefined` are handled explicitly
+    - `strictFunctionTypes`: Enforces stricter function type checking
+    - `noImplicitAny`: Prevents implicit `any` types
+    - And other strict checks
+  </Accordion>
+
+  <Accordion title="moduleResolution: bundler">
+    Recommended for modern TypeScript projects. Alternatively, you can use `"node16"` or `"nodenext"`.
+  </Accordion>
+
+  <Accordion title="target and lib">
+    Effect uses modern JavaScript features like generators. Setting `target` to `ES2022` or newer ensures these features are available.
+  </Accordion>
+
+  <Accordion title="skipLibCheck: true">
+    Speeds up compilation by skipping type checking of declaration files. Recommended for most projects.
+  </Accordion>
+</AccordionGroup>
+
+<Warning>
+  Effect will **not** work correctly without `"strict": true`. This is a hard requirement, not a recommendation.
+</Warning>
+
+## Editor Setup
+
+For the best development experience, configure your editor with TypeScript support.
+
+### Visual Studio Code
+
+VS Code has excellent TypeScript support out of the box. Recommended extensions:
+
+1. **TypeScript and JavaScript Language Features** (built-in)
+   - Provides IntelliSense, refactoring, and error checking
+
+2. **Error Lens** (optional)
+   - Shows TypeScript errors inline
+   - Install: `usernamehw.errorlens`
+
+3. **Pretty TypeScript Errors** (optional)
+   - Makes TypeScript errors more readable
+   - Install: `yoavbls.pretty-ts-errors`
+
+### Other Editors
+
+- **WebStorm**: Full TypeScript support built-in
+- **Neovim**: Use `typescript-language-server` with `nvim-lspconfig`
+- **Emacs**: Use `tide` or `lsp-mode` with `typescript-language-server`
+- **Sublime Text**: Use `LSP-typescript`
+
+## Verifying Installation
+
+Create a test file to verify your installation:
+
+<Steps>
+  <Step title="Create a test file">
+    Create `test.ts` in your project:
+
+    ```typescript test.ts
+    import { Effect } from "effect"
+
+    const program = Effect.gen(function* () {
+      const result = yield* Effect.succeed("Effect is working!")
+      console.log(result)
+      return result
+    })
+
+    Effect.runPromise(program)
+    ```
+  </Step>
+
+  <Step title="Run the file">
+    Execute the file using your TypeScript runtime:
+
+    ```bash
+    # Using tsx (recommended for quick tests)
+    npx tsx test.ts
+
+    # Or compile and run with Node.js
+    npx tsc test.ts && node test.js
+    ```
+
+    You should see:
+    ```
+    Effect is working!
+    ```
+  </Step>
+
+  <Step title="Check TypeScript errors">
+    Verify TypeScript is checking types correctly:
+
+    ```bash
+    npx tsc --noEmit
+    ```
+
+    This should complete without errors.
+  </Step>
+</Steps>
+
+<Tip>
+  For quick experimentation, install `tsx` globally: `npm install -g tsx`. Then run TypeScript files directly: `tsx your-file.ts`
+</Tip>
+
+## Optional Tools
+
+These tools enhance your Effect development experience:
+
+### Development Runtime
+
+<CodeGroup>
+```bash tsx (recommended)
+npm install -D tsx
+```
+
+```bash ts-node
+npm install -D ts-node
+```
+</CodeGroup>
+
+Both `tsx` and `ts-node` let you run TypeScript files directly without compilation.
+
+### Effect DevTools
+
+The Effect DevTools provide runtime inspection and debugging:
+
+```bash
+npm install @effect/experimental
+```
+
+Learn more in the [DevTools documentation](/guides/devtools).
+
+### Testing
+
+For testing Effect programs, use the official testing utilities:
+
+```bash
+npm install -D @effect/vitest
+```
+
+See the [Testing Guide](/guides/testing) for details.
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Type errors about generators">
+    Ensure your `tsconfig.json` has `"target": "ES2022"` or newer. Generators require ES2015+ target.
+  </Accordion>
+
+  <Accordion title="Module resolution errors">
+    Try setting `"moduleResolution": "bundler"` or `"node16"` in your `tsconfig.json`.
+  </Accordion>
+
+  <Accordion title="Errors about 'strict mode required'">
+    Effect requires `"strict": true` in `tsconfig.json`. This is not optional.
+  </Accordion>
+
+  <Accordion title="Import errors in Node.js">
+    If using Node.js with ES modules, ensure your `package.json` has `"type": "module"` or use `.mts` file extensions.
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+Now that Effect is installed and configured, you're ready to build your first application:
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Build your first Effect program in 5 minutes
+  </Card>
+  
+  <Card title="Essential Concepts" icon="book" href="/essentials">
+    Learn the core concepts of Effect
+  </Card>
+</CardGroup>

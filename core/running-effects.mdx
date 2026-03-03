@@ -1,0 +1,436 @@
+---
+title: Running Effects
+description: Execute Effect programs using runPromise, runSync, and Runtime
+---
+
+Effect values are descriptions of computations. To actually execute them, you need to "run" them using one of Effect's runtime functions.
+
+## runPromise - Promise-Based Execution
+
+```typescript
+export const runPromise: <A, E>(
+  effect: Effect<A, E, never>,
+  options?: { readonly signal?: AbortSignal | undefined } | undefined
+) => Promise<A>
+```
+
+Executes an effect and returns a Promise:
+
+```typescript
+import { Effect } from "effect"
+
+const program = Effect.gen(function* () {
+  yield* Effect.sleep("1 second")
+  return "Hello, World!"
+})
+
+// Execute and get a Promise
+Effect.runPromise(program).then(console.log)
+// Output (after 1 second): Hello, World!
+```
+
+<Steps>
+
+### Error Handling
+
+Errors in the Effect's error channel become rejected promises:
+
+```typescript
+import { Effect } from "effect"
+
+class ApiError {
+  readonly _tag = "ApiError"
+  constructor(readonly status: number) {}
+}
+
+const failing = Effect.fail(new ApiError(404))
+
+Effect.runPromise(failing)
+  .catch((error) => {
+    console.error(error)  // ApiError { _tag: 'ApiError', status: 404 }
+  })
+```
+
+### Cancellation Support
+
+```typescript
+import { Effect } from "effect"
+
+const longRunning = Effect.gen(function* () {
+  yield* Effect.sleep("10 seconds")
+  return "Done!"
+})
+
+const controller = new AbortController()
+
+Effect.runPromise(longRunning, { signal: controller.signal })
+  .catch((error) => console.log("Cancelled!"))
+
+// Cancel after 1 second
+setTimeout(() => controller.abort(), 1000)
+```
+
+### Requirements Must Be Never
+
+<Warning>
+`runPromise` requires the effect to have no dependencies (`R = never`). Provide all services before calling `runPromise`.
+</Warning>
+
+```typescript
+import { Effect, Context } from "effect"
+
+class Database extends Context.Tag("Database")<
+  Database,
+  { query: (sql: string) => Effect.Effect<unknown> }
+>() {}
+
+const program = Database.pipe(
+  Effect.flatMap((db) => db.query("SELECT * FROM users"))
+)
+// Effect<unknown, never, Database>
+
+// ❌ Type error: R is not never
+// Effect.runPromise(program)
+
+// ✅ Provide dependencies first
+const testDatabase = Database.of({
+  query: (sql) => Effect.succeed([{ id: 1, name: "Alice" }])
+})
+
+Effect.runPromise(
+  program.pipe(Effect.provideService(Database, testDatabase))
+)
+```
+
+</Steps>
+
+## runPromiseExit - Structured Results
+
+```typescript
+export const runPromiseExit: <A, E>(
+  effect: Effect<A, E, never>,
+  options?: { readonly signal?: AbortSignal } | undefined
+) => Promise<Exit.Exit<A, E>>
+```
+
+Returns an Exit type instead of throwing:
+
+```typescript
+import { Effect, Exit } from "effect"
+
+const program = Effect.fail("Something went wrong")
+
+const exit = await Effect.runPromiseExit(program)
+
+if (Exit.isSuccess(exit)) {
+  console.log("Success:", exit.value)
+} else {
+  console.log("Failure:", exit.cause)
+}
+// Output: Failure: { _tag: 'Fail', failure: 'Something went wrong' }
+```
+
+<Note>
+Use `runPromiseExit` when you need structured error information or want to avoid try/catch blocks.
+</Note>
+
+## runSync - Synchronous Execution
+
+```typescript
+export const runSync: <A, E>(effect: Effect<A, E>) => A
+```
+
+Executes an effect synchronously, returning the result immediately:
+
+```typescript
+import { Effect } from "effect"
+
+const program = Effect.sync(() => {
+  console.log("Computing...")
+  return 42
+})
+
+const result = Effect.runSync(program)  // 42
+console.log(result)  // 42
+```
+
+<Steps>
+
+### Synchronous Effects Only
+
+<Warning>
+`runSync` throws an `AsyncFiberException` if the effect contains async operations.
+</Warning>
+
+```typescript
+import { Effect } from "effect"
+
+const asyncProgram = Effect.gen(function* () {
+  yield* Effect.sleep("100 millis")
+  return 42
+})
+
+// ❌ Throws: AsyncFiberException
+// Effect.runSync(asyncProgram)
+
+// ✅ Use runPromise for async effects
+await Effect.runPromise(asyncProgram)  // 42
+```
+
+### When to Use runSync
+
+**Use `runSync` when:**
+- Testing synchronous effects
+- In environments without async support
+- Performance-critical hot paths with guaranteed sync effects
+
+**Don't use `runSync` when:**
+- Effect might contain async operations
+- You need to handle errors gracefully (use `runSyncExit`)
+- Working with I/O or network operations
+
+</Steps>
+
+## runSyncExit - Synchronous with Exit
+
+```typescript
+export const runSyncExit: <A, E>(effect: Effect<A, E>) => Exit.Exit<A, E>
+```
+
+Synchronous execution with structured error handling:
+
+```typescript
+import { Effect, Exit } from "effect"
+
+const program = Effect.fail("Error!")
+
+const exit = Effect.runSyncExit(program)
+
+console.log(exit)
+// Output:
+// {
+//   _id: "Exit",
+//   _tag: "Failure",
+//   cause: {
+//     _id: "Cause",
+//     _tag: "Fail",
+//     failure: "Error!"
+//   }
+// }
+```
+
+## Runtime - Advanced Execution
+
+A Runtime encapsulates the context, flags, and fiber refs needed to run effects:
+
+```typescript
+import { Effect, Runtime, Context } from "effect"
+
+class Logger extends Context.Tag("Logger")<
+  Logger,
+  { log: (msg: string) => void }
+>() {}
+
+const program = Effect.gen(function* () {
+  const logger = yield* Logger
+  logger.log("Hello from runtime!")
+  return 42
+})
+
+// Create a custom runtime with Logger provided
+const runtime = Runtime.make({
+  context: Context.make(Logger, {
+    log: (msg) => console.log(`[LOG] ${msg}`)
+  })
+})
+
+// Run effect using the runtime
+Runtime.runPromise(runtime, program)
+// Output: [LOG] Hello from runtime!
+```
+
+<Steps>
+
+### Runtime Methods
+
+```typescript
+interface Runtime<R> {
+  readonly context: Context.Context<R>
+  readonly runtimeFlags: RuntimeFlags.RuntimeFlags
+  readonly fiberRefs: FiberRefs.FiberRefs
+}
+```
+
+**Runtime.runFork** - Fork a fiber:
+
+```typescript
+import { Effect, Runtime } from "effect"
+
+const runtime = Runtime.defaultRuntime
+
+const fiber = Runtime.runFork(runtime, Effect.succeed(42))
+const result = await fiber.await
+```
+
+**Runtime.runSync** - Synchronous execution:
+
+```typescript
+import { Effect, Runtime } from "effect"
+
+const result = Runtime.runSync(
+  Runtime.defaultRuntime,
+  Effect.succeed(42)
+)
+```
+
+**Runtime.runPromise** - Promise-based execution:
+
+```typescript
+import { Effect, Runtime } from "effect"
+
+const result = await Runtime.runPromise(
+  Runtime.defaultRuntime,
+  Effect.succeed(42)
+)
+```
+
+### Default Runtime
+
+Effect provides a default runtime:
+
+```typescript
+import { Effect } from "effect"
+
+// These are equivalent:
+Effect.runPromise(program)
+Runtime.runPromise(Runtime.defaultRuntime, program)
+```
+
+### Custom Runtime for Testing
+
+```typescript
+import { Effect, Runtime, Context } from "effect"
+
+class Database extends Context.Tag("Database")<
+  Database,
+  { query: (sql: string) => Effect.Effect<unknown> }
+>() {}
+
+// Production runtime
+const prodRuntime = Runtime.make({
+  context: Context.make(Database, {
+    query: (sql) => Effect.tryPromise(() => db.execute(sql))
+  })
+})
+
+// Test runtime with mock
+const testRuntime = Runtime.make({
+  context: Context.make(Database, {
+    query: (sql) => Effect.succeed([{ id: 1, name: "Test" }])
+  })
+})
+
+const program = Database.pipe(
+  Effect.flatMap((db) => db.query("SELECT * FROM users"))
+)
+
+// Use different runtimes
+await Runtime.runPromise(prodRuntime, program)  // Real DB
+await Runtime.runPromise(testRuntime, program)  // Mock
+```
+
+</Steps>
+
+## runFork - Fiber-Based Execution
+
+```typescript
+import { Effect } from "effect"
+
+const program = Effect.gen(function* () {
+  yield* Effect.sleep("1 second")
+  return 42
+})
+
+const fiber = Effect.runFork(program)
+
+// The effect is running in the background
+console.log("Effect forked!")
+
+// Wait for it to complete
+const result = await fiber.await
+console.log(result)  // { _tag: 'Success', value: 42 }
+```
+
+## Comparison Table
+
+| Method | Returns | Async Support | Error Handling | Use Case |
+|--------|---------|---------------|----------------|----------|
+| `runPromise` | `Promise<A>` | ✅ | Rejects | Async effects, integrating with promises |
+| `runPromiseExit` | `Promise<Exit<A, E>>` | ✅ | Structured | Need detailed error info |
+| `runSync` | `A` | ❌ | Throws | Sync-only effects, testing |
+| `runSyncExit` | `Exit<A, E>` | ❌ | Structured | Sync effects with error info |
+| `runFork` | `Fiber<A, E>` | ✅ | Via fiber | Background execution, cancellation |
+
+## Best Practices
+
+<Steps>
+
+### Run at the Edges
+
+Keep effects as values until the last possible moment:
+
+```typescript
+// ❌ Bad: Running effects in the middle of your program
+function processUser(id: number) {
+  const user = Effect.runSync(fetchUser(id))
+  return user
+}
+
+// ✅ Good: Return effects and compose them
+function processUser(id: number): Effect.Effect<User, Error> {
+  return fetchUser(id)
+}
+
+// Run only at application boundary
+const main = processUser(1)
+Effect.runPromise(main)
+```
+
+### Provide Dependencies Before Running
+
+Always eliminate requirements before calling run functions:
+
+```typescript
+import { Effect } from "effect"
+
+const program: Effect.Effect<Result, Error, Database | Logger> = ...
+
+// ❌ Type error: still has dependencies
+// Effect.runPromise(program)
+
+// ✅ Provide all services first
+Effect.runPromise(
+  program.pipe(
+    Effect.provideService(Database, dbImpl),
+    Effect.provideService(Logger, loggerImpl)
+  )
+)
+```
+
+### Use runPromiseExit for Robust Error Handling
+
+Prefer structured exits over try/catch:
+
+```typescript
+import { Effect, Exit, Match } from "effect"
+
+const result = await Effect.runPromiseExit(program)
+
+Match.value(result).pipe(
+  Match.tag("Success", ({ value }) => console.log(value)),
+  Match.tag("Failure", ({ cause }) => console.error(cause)),
+  Match.exhaustive
+)
+```
+
+</Steps>

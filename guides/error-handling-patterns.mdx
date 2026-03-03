@@ -1,0 +1,409 @@
+---
+title: "Error Handling Patterns"
+description: "Common patterns for handling errors in Effect applications"
+icon: "shield-halved"
+---
+
+Master error handling in Effect with tagged errors, error recovery, validation, and production-ready patterns.
+
+## Prerequisites
+
+```bash
+npm install effect
+```
+
+## Pattern 1: Tagged Errors
+
+Define type-safe errors with `Data.TaggedError`:
+
+```typescript tagged-errors.ts
+import { Data, Effect } from "effect"
+
+class UserNotFoundError extends Data.TaggedError("UserNotFoundError")<{
+  readonly userId: string
+}> {
+  toString(): string {
+    return `User with ID '${this.userId}' not found`
+  }
+}
+
+class DatabaseError extends Data.TaggedError("DatabaseError")<{
+  readonly cause: unknown
+}> {
+  toString(): string {
+    return `Database error: ${this.cause}`
+  }
+}
+
+class ValidationError extends Data.TaggedError("ValidationError")<{
+  readonly field: string
+  readonly message: string
+}> {}
+
+// Use tagged errors in your code
+const findUser = (userId: string) =>
+  Effect.gen(function*() {
+    if (userId.length === 0) {
+      return yield* Effect.fail(new ValidationError({
+        field: "userId",
+        message: "User ID cannot be empty"
+      }))
+    }
+    
+    // Simulate database lookup
+    const user = null // Database query result
+    
+    if (user === null) {
+      return yield* Effect.fail(new UserNotFoundError({ userId }))
+    }
+    
+    return user
+  })
+```
+
+## Pattern 2: Catching Specific Errors
+
+Handle different error types with `catchTag`:
+
+```typescript catch-specific.ts
+import { Console, Effect } from "effect"
+
+const program = findUser("123").pipe(
+  Effect.catchTag("UserNotFoundError", (error) =>
+    Console.log(`User not found: ${error.userId}`).pipe(
+      Effect.as(null)
+    )
+  ),
+  Effect.catchTag("ValidationError", (error) =>
+    Console.log(`Validation failed: ${error.message}`).pipe(
+      Effect.as(null)
+    )
+  ),
+  Effect.catchTag("DatabaseError", (error) =>
+    Console.log(`Database error occurred`).pipe(
+      Effect.flatMap(() => Effect.fail(error)) // Re-throw
+    )
+  )
+)
+```
+
+## Pattern 3: Error Recovery with Fallbacks
+
+Provide fallback values when errors occur:
+
+```typescript fallbacks.ts
+import { Effect } from "effect"
+
+// Return default value on any error
+const withDefault = findUser("123").pipe(
+  Effect.catchAll(() => Effect.succeed({ id: "guest", name: "Guest User" }))
+)
+
+// Use orElse to try alternative operations
+const findUserWithFallback = (userId: string) =>
+  findUser(userId).pipe(
+    Effect.orElse(() => findUserInCache(userId)),
+    Effect.orElse(() => createGuestUser())
+  )
+
+// Retry with fallback
+const withRetryAndFallback = findUser("123").pipe(
+  Effect.retry({ times: 3 }),
+  Effect.catchAll(() => Effect.succeed(null))
+)
+```
+
+## Pattern 4: Error Transformation
+
+Convert errors to different types:
+
+```typescript transform-errors.ts
+import { Effect } from "effect"
+
+class ApiError extends Data.TaggedError("ApiError")<{
+  readonly statusCode: number
+  readonly message: string
+}> {}
+
+// Map domain errors to API errors
+const toApiError = (userId: string) =>
+  findUser(userId).pipe(
+    Effect.mapError((error) => {
+      switch (error._tag) {
+        case "UserNotFoundError":
+          return new ApiError({ statusCode: 404, message: error.toString() })
+        case "ValidationError":
+          return new ApiError({ statusCode: 400, message: error.message })
+        case "DatabaseError":
+          return new ApiError({ statusCode: 500, message: "Internal server error" })
+      }
+    })
+  )
+```
+
+## Pattern 5: Validation with Schema
+
+Validate data with Effect Schema:
+
+```typescript schema-validation.ts
+import { Effect } from "effect"
+import * as Schema from "effect/Schema"
+
+const UserSchema = Schema.Struct({
+  id: Schema.String.pipe(
+    Schema.minLength(1, { message: () => "ID cannot be empty" })
+  ),
+  name: Schema.String.pipe(
+    Schema.minLength(2, { message: () => "Name must be at least 2 characters" })
+  ),
+  email: Schema.String.pipe(
+    Schema.pattern(/^[^@]+@[^@]+\.[^@]+$/, {
+      message: () => "Invalid email format"
+    })
+  ),
+  age: Schema.Number.pipe(
+    Schema.int({ message: () => "Age must be an integer" }),
+    Schema.greaterThanOrEqualTo(0, { message: () => "Age cannot be negative" }),
+    Schema.lessThan(150, { message: () => "Age must be realistic" })
+  )
+})
+
+const validateUser = (data: unknown) =>
+  Effect.gen(function*() {
+    const user = yield* Schema.decodeUnknown(UserSchema)(data)
+    return user
+  }).pipe(
+    Effect.catchAll((error) =>
+      Effect.gen(function*() {
+        yield* Console.log("Validation failed:")
+        yield* Console.log(error)
+        return yield* Effect.fail(new ValidationError({
+          field: "user",
+          message: "Invalid user data"
+        }))
+      })
+    )
+  )
+```
+
+## Pattern 6: Resource Safety
+
+Ensure cleanup happens even when errors occur:
+
+```typescript resource-safety.ts
+import { Effect, Scope } from "effect"
+
+const openFile = (path: string) =>
+  Effect.acquireRelease(
+    Effect.gen(function*() {
+      yield* Console.log(`Opening file: ${path}`)
+      return { path, handle: 123 }
+    }),
+    (file) => Console.log(`Closing file: ${file.path}`)
+  )
+
+const processFile = (path: string) =>
+  Effect.gen(function*() {
+    const file = yield* openFile(path)
+    
+    // Even if this fails, file will be closed
+    yield* Effect.fail(new Error("Processing failed"))
+    
+    return file
+  }).pipe(
+    Effect.scoped
+  )
+
+// File is guaranteed to be closed
+processFile("data.txt").pipe(
+  Effect.catchAll(() => Console.log("Handled error, file was closed")),
+  Effect.runPromise
+)
+```
+
+## Pattern 7: Collecting Multiple Errors
+
+Validate multiple fields and collect all errors:
+
+```typescript collect-errors.ts
+import { Effect, Array } from "effect"
+
+const validateField = (field: string, value: string) =>
+  value.length > 0
+    ? Effect.succeed(value)
+    : Effect.fail(new ValidationError({ field, message: `${field} is required` }))
+
+const validateForm = (data: Record<string, string>) =>
+  Effect.gen(function*() {
+    const results = yield* Effect.all(
+      [
+        validateField("name", data.name),
+        validateField("email", data.email),
+        validateField("password", data.password)
+      ],
+      { mode: "validate" } // Collect all errors instead of failing fast
+    )
+    
+    return results
+  }).pipe(
+    Effect.catchAll((errors) =>
+      Effect.gen(function*() {
+        yield* Console.log("Validation errors:")
+        Array.forEach(errors, (error) => Console.log(`- ${error.message}`))
+        return yield* Effect.fail(errors)
+      })
+    )
+  )
+```
+
+## Pattern 8: Defect vs Expected Errors
+
+Distinguish between recoverable errors and bugs:
+
+```typescript defects.ts
+import { Effect } from "effect"
+
+// Expected errors - part of the domain
+const expectedError = Effect.fail(new UserNotFoundError({ userId: "123" }))
+
+// Defects - programming bugs
+const defect = Effect.die(new Error("This should never happen"))
+
+// Catch only expected errors
+expectedError.pipe(
+  Effect.catchAll(() => Console.log("Handled expected error"))
+)
+
+// Catch defects (usually only for logging)
+defect.pipe(
+  Effect.catchAllDefect((error) =>
+    Console.log(`Caught defect: ${error.message}`)
+  )
+)
+
+// Catch both errors and defects
+const catchEverything = Effect.gen(function*() {
+  yield* someEffect
+}).pipe(
+  Effect.catchAllCause((cause) =>
+    Console.log(`Something went wrong: ${cause}`)
+  )
+)
+```
+
+## Pattern 9: Error Context and Logging
+
+Add context to errors for debugging:
+
+```typescript error-context.ts
+import { Effect } from "effect"
+
+const enrichedError = findUser("123").pipe(
+  Effect.tapError((error) =>
+    Console.log(`Failed to find user: ${error._tag}`)
+  ),
+  Effect.annotateLogs({
+    operation: "findUser",
+    userId: "123",
+    timestamp: new Date().toISOString()
+  }),
+  Effect.withSpan("findUser", { attributes: { userId: "123" } })
+)
+```
+
+## Pattern 10: Production Error Handling
+
+Complete error handling for production:
+
+```typescript production-errors.ts
+import { Effect, Console } from "effect"
+
+const productionHandler = <A, E>(effect: Effect.Effect<A, E>) =>
+  effect.pipe(
+    // Retry transient errors
+    Effect.retry({
+      times: 3,
+      schedule: Schedule.exponential("100 millis")
+    }),
+    // Catch expected errors
+    Effect.catchTag("UserNotFoundError", (error) =>
+      Console.log(`User not found: ${error.userId}`).pipe(
+        Effect.as(null)
+      )
+    ),
+    Effect.catchTag("DatabaseError", (error) =>
+      Console.log("Database error, using cache").pipe(
+        Effect.flatMap(() => fallbackToCache())
+      )
+    ),
+    // Log unexpected errors
+    Effect.tapErrorCause((cause) =>
+      Effect.logError(`Unexpected error: ${cause}`)
+    ),
+    // Provide safe default
+    Effect.catchAll(() => Effect.succeed(null))
+  )
+```
+
+## Testing Error Scenarios
+
+Test error handling:
+
+```typescript error-testing.ts
+import { Effect } from "effect"
+import { describe, it, assert } from "@effect/vitest"
+
+describe("Error handling", () => {
+  it.effect("should handle UserNotFoundError", () =>
+    Effect.gen(function*() {
+      const result = yield* findUser("invalid").pipe(
+        Effect.catchTag("UserNotFoundError", () => Effect.succeed(null)),
+        Effect.flip
+      )
+      
+      assert.strictEqual(result, null)
+    })
+  )
+  
+  it.effect("should retry on DatabaseError", () =>
+    Effect.gen(function*() {
+      let attempts = 0
+      
+      const flakyEffect = Effect.gen(function*() {
+        attempts++
+        if (attempts < 3) {
+          return yield* Effect.fail(new DatabaseError({ cause: "timeout" }))
+        }
+        return "success"
+      })
+      
+      const result = yield* flakyEffect.pipe(
+        Effect.retry({ times: 3 })
+      )
+      
+      assert.strictEqual(result, "success")
+      assert.strictEqual(attempts, 3)
+    })
+  )
+})
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Building HTTP Server" icon="server" href="/guides/building-http-server">
+    Apply error handling in web servers
+  </Card>
+  
+  <Card title="Database Integration" icon="database" href="/guides/database-integration">
+    Handle database errors
+  </Card>
+  
+  <Card title="CLI Applications" icon="terminal" href="/guides/cli-application">
+    Error handling in CLI apps
+  </Card>
+  
+  <Card title="Effect API Reference" icon="book" href="/api-reference/effect/effect">
+    Full Effect error handling API
+  </Card>
+</CardGroup>

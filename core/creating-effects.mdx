@@ -1,0 +1,304 @@
+---
+title: Creating Effects
+description: Learn how to create Effect values using succeed, fail, sync, and async constructors
+---
+
+Effect provides several constructors to create Effect values from different kinds of computations.
+
+## succeed - Pure Success Values
+
+Creates an effect that always succeeds with a given value:
+
+```typescript
+export const succeed: <A>(value: A) => Effect<A>
+```
+
+<Steps>
+
+### Basic Usage
+
+```typescript
+import { Effect } from "effect"
+
+// Effect<number, never, never>
+const success = Effect.succeed(42)
+
+Effect.runSync(success)  // Returns: 42
+```
+
+### Use Cases
+
+- Lifting pure values into the Effect context
+- Providing fallback values in error recovery
+- Creating constant effects for testing
+
+</Steps>
+
+## fail - Typed Errors
+
+Creates an effect that fails with a typed error:
+
+```typescript
+export const fail: <E>(error: E) => Effect<never, E>
+```
+
+```typescript
+import { Effect } from "effect"
+
+class NetworkError {
+  readonly _tag = "NetworkError"
+  constructor(readonly message: string) {}
+}
+
+// Effect<never, NetworkError, never>
+const failure = Effect.fail(
+  new NetworkError("Connection timeout")
+)
+
+Effect.runPromise(failure)  // Rejects with NetworkError
+```
+
+<Note>
+Use `fail` for expected, recoverable errors. The error type is tracked in the Effect's type signature, enabling type-safe error handling.
+</Note>
+
+## sync - Lazy Synchronous Computation
+
+Wraps a synchronous side-effecting function:
+
+```typescript
+export const sync: <A>(thunk: LazyArg<A>) => Effect<A>
+```
+
+```typescript
+import { Effect } from "effect"
+
+const program = Effect.sync(() => {
+  console.log("This is a side effect!")
+  return Math.random()
+})
+// Effect<number, never, never>
+
+// The function isn't called until the effect runs
+Effect.runSync(program)  // NOW the side effect executes
+```
+
+<Steps>
+
+### When to Use sync
+
+**Use `sync` when:**
+- You have synchronous side effects (I/O, logging, mutations)
+- The computation should be deferred until the effect runs
+- You want effects to be re-executable with fresh values
+
+**Don't use `sync` when:**
+- You have a pure value (use `succeed` instead)
+- The computation is asynchronous (use `async` instead)
+- The computation might throw (use `try` or `trySync` instead)
+
+### Lazy Evaluation
+
+```typescript
+import { Effect } from "effect"
+
+let counter = 0
+
+const increment = Effect.sync(() => {
+  counter++
+  return counter
+})
+
+// Each run executes the thunk again
+Effect.runSync(increment)  // 1
+Effect.runSync(increment)  // 2
+Effect.runSync(increment)  // 3
+```
+
+</Steps>
+
+## async - Asynchronous Effects
+
+Wraps callback-based or promise-based async operations:
+
+```typescript
+export const async: <A, E = never, R = never>(
+  resume: (callback: (_: Effect<A, E, R>) => void, signal: AbortSignal) => void | Effect<void, never, R>,
+  blockingOn?: FiberId.FiberId
+) => Effect<A, E, R>
+```
+
+### Callback-Based APIs
+
+```typescript
+import { Effect } from "effect"
+import * as fs from "fs"
+
+const readFile = (path: string): Effect.Effect<string, Error> =>
+  Effect.async<string, Error>((resume) => {
+    fs.readFile(path, "utf-8", (error, data) => {
+      if (error) {
+        resume(Effect.fail(error))
+      } else {
+        resume(Effect.succeed(data))
+      }
+    })
+  })
+```
+
+### Promise-Based APIs
+
+For promises, Effect provides a specialized constructor:
+
+```typescript
+import { Effect } from "effect"
+
+// Simple promise wrapping
+const fetchUser = (id: number) =>
+  Effect.promise(() => 
+    fetch(`/api/users/${id}`).then(r => r.json())
+  )
+
+// With typed error handling
+class FetchError {
+  readonly _tag = "FetchError"
+  constructor(readonly cause: unknown) {}
+}
+
+const fetchUserSafe = (id: number) =>
+  Effect.tryPromise({
+    try: () => fetch(`/api/users/${id}`).then(r => r.json()),
+    catch: (error) => new FetchError(error)
+  })
+```
+
+### Cancellation Support
+
+The `async` constructor provides an `AbortSignal` for cancellation:
+
+```typescript
+import { Effect } from "effect"
+
+const delayed = (ms: number): Effect.Effect<void> =>
+  Effect.async<void>((resume, signal) => {
+    const timeoutId = setTimeout(() => {
+      resume(Effect.void)
+    }, ms)
+
+    // Cleanup function - called if the effect is interrupted
+    signal.addEventListener("abort", () => {
+      clearTimeout(timeoutId)
+    })
+  })
+
+const program = Effect.gen(function* () {
+  yield* delayed(5000)  // Will be cancelled after 1 second
+})
+
+Effect.runPromise(
+  program.pipe(Effect.timeout("1 second"))
+)
+```
+
+## Other Constructors
+
+### void - No-op Effect
+
+```typescript
+import { Effect } from "effect"
+
+// Effect<void, never, never>
+const noop = Effect.void
+```
+
+### succeedNone / succeedSome
+
+```typescript
+import { Effect } from "effect"
+
+// Effect<Option<never>, never, never>
+const none = Effect.succeedNone
+
+// Effect<Option<number>, never, never>
+const some = Effect.succeedSome(42)
+```
+
+### suspend - Lazy Effect Creation
+
+Delays the creation of an Effect until it's needed:
+
+```typescript
+import { Effect } from "effect"
+
+const program = Effect.suspend(() => {
+  console.log("Creating effect...")
+  return Effect.succeed(42)
+})
+
+// "Creating effect..." is only logged when the effect runs
+Effect.runSync(program)
+```
+
+<Warning>
+Use `suspend` for recursive effects or when you need to capture variables at execution time, not definition time.
+</Warning>
+
+## Comparison Table
+
+| Constructor | When to Use | Example |
+|------------|-------------|----------|
+| `succeed` | Pure value | `Effect.succeed(42)` |
+| `fail` | Typed error | `Effect.fail(new Error())` |
+| `sync` | Sync side effect | `Effect.sync(() => console.log())` |
+| `async` | Async callback | `Effect.async((resume) => ...)` |
+| `promise` | Promise wrapping | `Effect.promise(() => fetch())` |
+| `tryPromise` | Promise with typed errors | `Effect.tryPromise({ try, catch })` |
+| `suspend` | Lazy effect creation | `Effect.suspend(() => effect)` |
+
+## Best Practices
+
+<Steps>
+
+### Choose the Right Constructor
+
+Use the most specific constructor for your use case:
+- Pure values → `succeed`
+- Side effects → `sync`
+- Async operations → `async` or `promise`
+- Expected failures → `fail`
+
+### Type Your Errors
+
+Always use structured error types with a `_tag` field:
+
+```typescript
+import { Effect } from "effect"
+
+class ValidationError {
+  readonly _tag = "ValidationError"
+  constructor(readonly field: string) {}
+}
+
+class DatabaseError {
+  readonly _tag = "DatabaseError"
+  constructor(readonly message: string) {}
+}
+
+const program: Effect.Effect<User, ValidationError | DatabaseError> = ...
+```
+
+### Defer Side Effects
+
+Always wrap side effects in `sync` or `async`, never execute them directly:
+
+```typescript
+import { Effect } from "effect"
+
+// ❌ Bad: Side effect executes immediately
+const bad = Effect.succeed(console.log("Hello"))
+
+// ✅ Good: Side effect deferred until effect runs
+const good = Effect.sync(() => console.log("Hello"))
+```
+
+</Steps>

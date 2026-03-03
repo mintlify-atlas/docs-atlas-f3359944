@@ -1,0 +1,498 @@
+---
+title: 'Testing Strategies'
+description: 'Learn how to test Effect code effectively with mocks, fixtures, and test utilities'
+icon: 'flask-vial'
+---
+
+Effect provides powerful testing utilities that make it easy to write reliable, maintainable tests with full type safety.
+
+## Testing Setup
+
+Install the testing utilities:
+
+```bash
+pnpm add -D @effect/vitest vitest
+```
+
+Configure Vitest:
+
+```typescript vitest.config.ts
+import { defineConfig } from "vitest/config"
+
+export default defineConfig({
+  test: {
+    globals: false,
+    include: ["tests/**/*.test.ts"]
+  }
+})
+```
+
+## Basic Testing
+
+Use `it.effect` for testing Effect programs.
+
+```typescript
+import { it } from "@effect/vitest"
+import { Effect } from "effect"
+import { assert } from "@effect/vitest/utils"
+
+it.effect("should add two numbers", () =>
+  Effect.gen(function* () {
+    const result = yield* Effect.succeed(2 + 2)
+    assert.strictEqual(result, 4)
+  })
+)
+```
+
+<Warning>
+Never use `Effect.runSync` or `Effect.runPromise` inside tests. Always use `it.effect` which handles the runtime automatically.
+</Warning>
+
+## Testing Services
+
+### Creating Test Layers
+
+Create mock implementations for testing.
+
+```typescript tests/helpers/UserService.test.ts
+import { Layer, Effect, Ref } from "effect"
+import { UserService } from "../../src/services/UserService.js"
+import type { User } from "../../src/domain/User.js"
+
+export const makeTestUserService = Effect.gen(function* () {
+  const users = yield* Ref.make<Map<string, User>>(new Map())
+
+  return UserService.of({
+    findById: (id) =>
+      Ref.get(users).pipe(
+        Effect.flatMap(map =>
+          map.has(id)
+            ? Effect.succeed(map.get(id)!)
+            : Effect.fail(new UserNotFound(id))
+        )
+      ),
+
+    create: (email, name) =>
+      Effect.gen(function* () {
+        const id = Math.random().toString()
+        const user = { id, email, name, createdAt: new Date() }
+        yield* Ref.update(users, map => new Map(map).set(id, user))
+        return user
+      }),
+
+    list: () =>
+      Ref.get(users).pipe(
+        Effect.map(map => Array.from(map.values()))
+      )
+  })
+})
+
+export const UserServiceTest = Layer.effect(
+  UserService,
+  makeTestUserService
+)
+```
+
+<Tip>
+Use `Ref` for stateful test services. This allows you to verify state changes during tests.
+</Tip>
+
+### Testing with Dependencies
+
+```typescript tests/unit/OrderService.test.ts
+import { it } from "@effect/vitest"
+import { Effect, Layer } from "effect"
+import { OrderService } from "../../src/services/OrderService.js"
+import { UserServiceTest } from "../helpers/UserService.test.js"
+import { PaymentServiceTest } from "../helpers/PaymentService.test.js"
+
+const TestLayer = Layer.mergeAll(
+  UserServiceTest,
+  PaymentServiceTest
+)
+
+it.effect("should create order", () =>
+  Effect.gen(function* () {
+    const orderService = yield* OrderService
+    const userService = yield* UserService
+
+    const user = yield* userService.create("test@example.com", "Test User")
+    const order = yield* orderService.create(user.id, [{ id: "1", quantity: 2 }])
+
+    assert.strictEqual(order.userId, user.id)
+    assert.strictEqual(order.items.length, 1)
+  }).pipe(
+    Effect.provide(TestLayer)
+  )
+)
+```
+
+## Testing Error Scenarios
+
+### Testing Failures
+
+```typescript
+import { it } from "@effect/vitest"
+import { Effect, Exit } from "effect"
+import { assert } from "@effect/vitest/utils"
+
+it.effect("should fail with UserNotFound", () =>
+  Effect.gen(function* () {
+    const service = yield* UserService
+    const exit = yield* Effect.exit(service.findById("nonexistent"))
+
+    assert.true(Exit.isFailure(exit))
+    if (Exit.isFailure(exit)) {
+      const error = exit.cause.failures[0]
+      assert.strictEqual(error._tag, "UserNotFound")
+      assert.strictEqual(error.id, "nonexistent")
+    }
+  }).pipe(
+    Effect.provide(UserServiceTest)
+  )
+)
+```
+
+### Testing Error Recovery
+
+```typescript
+it.effect("should recover from errors", () =>
+  Effect.gen(function* () {
+    const service = yield* UserService
+
+    const result = yield* service.findById("invalid").pipe(
+      Effect.catchTag("UserNotFound", () =>
+        Effect.succeed({ id: "default", name: "Guest", email: "guest@example.com" })
+      )
+    )
+
+    assert.strictEqual(result.name, "Guest")
+  }).pipe(
+    Effect.provide(UserServiceTest)
+  )
+)
+```
+
+## Testing Concurrent Operations
+
+```typescript
+import { it } from "@effect/vitest"
+import { Effect, Fiber, Ref } from "effect"
+
+it.effect("should handle concurrent updates", () =>
+  Effect.gen(function* () {
+    const counter = yield* Ref.make(0)
+
+    const increment = Ref.update(counter, n => n + 1)
+
+    yield* Effect.all(
+      Array.from({ length: 100 }, () => increment),
+      { concurrency: "unbounded" }
+    )
+
+    const result = yield* Ref.get(counter)
+    assert.strictEqual(result, 100)
+  })
+)
+```
+
+## Testing with TestClock
+
+Control time in tests for scheduling and timeouts.
+
+```typescript
+import { it } from "@effect/vitest"
+import { Effect, TestClock, Duration, Fiber } from "effect"
+
+it.effect("should delay execution", () =>
+  Effect.gen(function* () {
+    const start = Date.now()
+
+    const fiber = yield* Effect.sleep(Duration.seconds(10)).pipe(
+      Effect.flatMap(() => Effect.succeed("done")),
+      Effect.fork
+    )
+
+    yield* TestClock.adjust(Duration.seconds(10))
+    const result = yield* Fiber.join(fiber)
+
+    assert.strictEqual(result, "done")
+  })
+)
+
+it.effect("should timeout correctly", () =>
+  Effect.gen(function* () {
+    const fiber = yield* Effect.never.pipe(
+      Effect.timeout(Duration.seconds(5)),
+      Effect.fork
+    )
+
+    yield* TestClock.adjust(Duration.seconds(5))
+    const result = yield* Fiber.join(fiber)
+
+    assert.true(Option.isNone(result))
+  })
+)
+```
+
+<Tip>
+Use `TestClock.adjust` to advance virtual time without actually waiting. This makes time-dependent tests fast and deterministic.
+</Tip>
+
+## Testing Streams
+
+```typescript
+import { it } from "@effect/vitest"
+import { Stream, Effect, Chunk } from "effect"
+import { assert } from "@effect/vitest/utils"
+
+it.effect("should emit all values", () =>
+  Effect.gen(function* () {
+    const stream = Stream.make(1, 2, 3, 4, 5)
+    const result = yield* Stream.runCollect(stream)
+
+    assert.deepStrictEqual(
+      Array.from(result),
+      [1, 2, 3, 4, 5]
+    )
+  })
+)
+
+it.effect("should filter stream", () =>
+  Effect.gen(function* () {
+    const stream = Stream.range(1, 10).pipe(
+      Stream.filter(n => n % 2 === 0)
+    )
+    const result = yield* Stream.runCollect(stream)
+
+    assert.deepStrictEqual(
+      Array.from(result),
+      [2, 4, 6, 8]
+    )
+  })
+)
+```
+
+## Property-Based Testing
+
+Use FastCheck for property-based testing.
+
+```typescript
+import { it } from "@effect/vitest"
+import { Effect, fc } from "effect"
+
+it.effect("addition is commutative", () =>
+  Effect.gen(function* () {
+    yield* fc.assert(
+      fc.asyncProperty(
+        fc.integer(),
+        fc.integer(),
+        async (a, b) => {
+          const result1 = await Effect.runPromise(Effect.succeed(a + b))
+          const result2 = await Effect.runPromise(Effect.succeed(b + a))
+          return result1 === result2
+        }
+      )
+    )
+  })
+)
+```
+
+## Testing Retries
+
+```typescript
+it.effect("should retry on failure", () =>
+  Effect.gen(function* () {
+    const attempts = yield* Ref.make(0)
+
+    const task = Ref.updateAndGet(attempts, n => n + 1).pipe(
+      Effect.flatMap(n =>
+        n < 3
+          ? Effect.fail(new Error("Not yet"))
+          : Effect.succeed("Success")
+      )
+    )
+
+    const result = yield* task.pipe(
+      Effect.retry(Schedule.recurs(5))
+    )
+
+    const finalAttempts = yield* Ref.get(attempts)
+
+    assert.strictEqual(result, "Success")
+    assert.strictEqual(finalAttempts, 3)
+  })
+)
+```
+
+## Testing Interruption
+
+```typescript
+import { it } from "@effect/vitest"
+import { Effect, Fiber, Ref, Duration } from "effect"
+
+it.effect("should handle interruption", () =>
+  Effect.gen(function* () {
+    const released = yield* Ref.make(false)
+
+    const task = Effect.acquireRelease(
+      Effect.succeed("resource"),
+      () => Ref.set(released, true)
+    ).pipe(
+      Effect.flatMap(() => Effect.never)
+    )
+
+    const fiber = yield* Effect.fork(task)
+    yield* Fiber.interrupt(fiber)
+
+    const wasReleased = yield* Ref.get(released)
+    assert.true(wasReleased)
+  })
+)
+```
+
+<Warning>
+Always test that resources are properly released, especially when interruption can occur.
+</Warning>
+
+## Fixture Data
+
+Create reusable test fixtures.
+
+```typescript tests/helpers/fixtures.ts
+import type { User, Order } from "../../src/domain/index.js"
+
+export const testUser: User = {
+  id: "test-user-1",
+  email: "test@example.com",
+  name: "Test User",
+  createdAt: new Date("2024-01-01")
+}
+
+export const testOrder: Order = {
+  id: "test-order-1",
+  userId: testUser.id,
+  items: [
+    { productId: "prod-1", quantity: 2, price: 10.99 }
+  ],
+  total: 21.98,
+  createdAt: new Date("2024-01-02")
+}
+
+export const makeUser = (overrides?: Partial<User>): User => ({
+  ...testUser,
+  ...overrides
+})
+```
+
+## Integration Testing
+
+Test full application flows.
+
+```typescript tests/integration/checkout.test.ts
+import { it } from "@effect/vitest"
+import { Effect } from "effect"
+import { AppLive } from "../../src/layers/app.js"
+
+it.effect("should complete checkout flow", () =>
+  Effect.gen(function* () {
+    const userService = yield* UserService
+    const orderService = yield* OrderService
+    const paymentService = yield* PaymentService
+
+    // Create user
+    const user = yield* userService.create("buyer@example.com", "Buyer")
+
+    // Create order
+    const order = yield* orderService.create(user.id, [
+      { productId: "prod-1", quantity: 1 }
+    ])
+
+    // Process payment
+    const payment = yield* paymentService.process(order.id, order.total)
+
+    assert.strictEqual(payment.status, "completed")
+    assert.strictEqual(payment.amount, order.total)
+  }).pipe(
+    Effect.provide(AppLive)
+  )
+)
+```
+
+## Snapshot Testing
+
+Test complex output structures.
+
+```typescript
+import { it } from "@effect/vitest"
+import { Effect } from "effect"
+
+it.effect("should match snapshot", () =>
+  Effect.gen(function* () {
+    const service = yield* ReportService
+    const report = yield* service.generateReport("2024-01")
+
+    expect(report).toMatchSnapshot()
+  }).pipe(
+    Effect.provide(TestLayer)
+  )
+)
+```
+
+## Testing Best Practices
+
+1. **Use it.effect**: Never run effects manually in tests
+2. **Mock at boundaries**: Mock external services, not business logic
+3. **Test error paths**: Verify error handling works correctly
+4. **Use TestClock**: Don't use real timeouts in tests
+5. **Test interruption**: Verify cleanup happens correctly
+6. **Isolate tests**: Each test should be independent
+7. **Use fixtures**: Create reusable test data
+8. **Test concurrency**: Verify concurrent operations work correctly
+
+<Tip>
+Structure tests using the Arrange-Act-Assert pattern for clarity.
+</Tip>
+
+## Common Patterns
+
+### Testing Database Operations
+
+```typescript
+it.effect("should persist user", () =>
+  Effect.gen(function* () {
+    const db = yield* Database
+    const service = yield* UserService
+
+    const user = yield* service.create("test@example.com", "Test")
+    const found = yield* service.findById(user.id)
+
+    assert.deepStrictEqual(found, user)
+  }).pipe(
+    Effect.provide(TestDatabaseLayer)
+  )
+)
+```
+
+### Testing API Responses
+
+```typescript
+it.effect("should return 404 for missing user", () =>
+  Effect.gen(function* () {
+    const response = yield* handleRequest({
+      method: "GET",
+      url: "/users/nonexistent"
+    })
+
+    assert.strictEqual(response.status, 404)
+  }).pipe(
+    Effect.provide(TestLayer)
+  )
+)
+```
+
+## Next Steps
+
+- Learn about [Project Structure](/guides/best-practices/project-structure)
+- Explore [Type Safety](/guides/best-practices/type-safety)
+- Master [Performance Optimization](/guides/best-practices/performance-optimization)

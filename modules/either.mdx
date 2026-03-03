@@ -1,0 +1,285 @@
+---
+title: Either
+description: Represent computations that can fail with Either.Right and Either.Left
+---
+
+The `Either` data type represents values with two possibilities, typically used for error handling where `Left` represents failure and `Right` represents success.
+
+## Type Signature
+
+```typescript
+type Either<A, E = never> = Left<E, A> | Right<E, A>
+
+interface Left<E, A> {
+  readonly _tag: "Left"
+  readonly left: E
+}
+
+interface Right<E, A> {
+  readonly _tag: "Right"
+  readonly right: A
+}
+```
+
+## Creating Eithers
+
+<Tabs>
+  <Tab title="right">
+    ```typescript
+    import { Either } from "effect"
+
+    const success = Either.right(42)
+    // Either<number, never>
+
+    console.log(success)
+    // { _tag: 'Right', right: 42 }
+    ```
+  </Tab>
+  <Tab title="left">
+    ```typescript
+    import { Either } from "effect"
+
+    const failure = Either.left("error")
+    // Either<never, string>
+
+    console.log(failure)
+    // { _tag: 'Left', left: 'error' }
+    ```
+  </Tab>
+  <Tab title="try">
+    ```typescript
+    import { Either } from "effect"
+
+    const result = Either.try({
+      try: () => JSON.parse('{"name":"John"}'),
+      catch: (error) => `Parse error: ${error}`
+    })
+    // Either<any, string>
+    ```
+  </Tab>
+</Tabs>
+
+## Type Guards
+
+```typescript
+import { Either } from "effect"
+
+const value = Either.right(1)
+
+if (Either.isRight(value)) {
+  console.log(value.right)  // 1
+}
+
+if (Either.isLeft(value)) {
+  console.log(value.left)
+}
+```
+
+## Pattern Matching
+
+### match
+
+Handle both `Left` and `Right` cases.
+
+```typescript
+import { Either } from "effect"
+
+const onLeft = (strings: ReadonlyArray<string>): string => 
+  `strings: ${strings.join(', ')}`
+
+const onRight = (value: number): string => 
+  `Ok: ${value}`
+
+const result = Either.match(Either.right(1), {
+  onLeft,
+  onRight
+})
+// "Ok: 1"
+
+const error = Either.match(
+  Either.left(['string 1', 'string 2']),
+  { onLeft, onRight }
+)
+// "strings: string 1, string 2"
+```
+
+## Transformations
+
+### map
+
+Transforms the `Right` value.
+
+```typescript
+import { Either } from "effect"
+
+const result = Either.right(2).pipe(
+  Either.map(n => n * 2)
+)
+// Right(4)
+```
+
+### mapLeft
+
+Transforms the `Left` value.
+
+```typescript
+import { Either } from "effect"
+
+const result = Either.left("error").pipe(
+  Either.mapLeft(e => `Error: ${e}`)
+)
+// Left("Error: error")
+```
+
+### mapBoth
+
+Transforms both sides simultaneously.
+
+```typescript
+import { Either } from "effect"
+
+const result = Either.mapBoth(Either.right(1), {
+  onLeft: (e: string) => `Error: ${e}`,
+  onRight: (n: number) => n * 2
+})
+// Right(2)
+```
+
+## Conversions
+
+<Tabs>
+  <Tab title="fromOption">
+    ```typescript
+    import { Either, Option } from "effect"
+
+    Either.fromOption(Option.some(1), () => 'error')
+    // Right(1)
+
+    Either.fromOption(Option.none(), () => 'error')
+    // Left('error')
+    ```
+  </Tab>
+  <Tab title="fromNullable">
+    ```typescript
+    import { Either } from "effect"
+
+    Either.fromNullable(1, () => 'fallback')
+    // Right(1)
+
+    Either.fromNullable(null, () => 'fallback')
+    // Left('fallback')
+    ```
+  </Tab>
+  <Tab title="getRight">
+    ```typescript
+    import { Either, Option } from "effect"
+
+    Either.getRight(Either.right('ok'))
+    // Some('ok')
+
+    Either.getRight(Either.left('err'))
+    // None
+    ```
+  </Tab>
+</Tabs>
+
+## Chaining Operations
+
+### flatMap
+
+```typescript
+import { Either } from "effect"
+
+const result = Either.right(2).pipe(
+  Either.flatMap(n => 
+    n > 0 ? Either.right(n * 2) : Either.left("Must be positive")
+  )
+)
+// Right(4)
+```
+
+### orElse
+
+```typescript
+import { Either } from "effect"
+
+const result = Either.left("error").pipe(
+  Either.orElse(() => Either.right(42))
+)
+// Right(42)
+```
+
+## Error Handling
+
+### catchAll
+
+```typescript
+import { Either } from "effect"
+
+const result = Either.left("error").pipe(
+  Either.catchAll(error => Either.right(`Recovered from: ${error}`))
+)
+// Right("Recovered from: error")
+```
+
+## Combining Eithers
+
+### zipWith
+
+```typescript
+import { Either } from "effect"
+
+const result = Either.zipWith(
+  Either.right(2),
+  Either.right(3),
+  (a, b) => a + b
+)
+// Right(5)
+```
+
+### all
+
+```typescript
+import { Either } from "effect"
+
+const result = Either.all([
+  Either.right(1),
+  Either.right(2),
+  Either.right(3)
+])
+// Right([1, 2, 3])
+
+const withError = Either.all([
+  Either.right(1),
+  Either.left("error"),
+  Either.right(3)
+])
+// Left("error")
+```
+
+<Note>
+`Either` is right-biased, meaning operations like `map` and `flatMap` operate on the `Right` value. The `Left` value typically represents an error and is preserved through transformations.
+</Note>
+
+## Use Cases
+
+- Error handling without exceptions
+- Validation results
+- Parsing operations
+- API responses with success/failure states
+- Railway-oriented programming
+
+## Key Operations
+
+| Operation | Description |
+|-----------|-------------|
+| `right` | Creates a successful Either |
+| `left` | Creates a failed Either |
+| `try` | Safely executes a function |
+| `isRight` | Checks if Either is Right |
+| `isLeft` | Checks if Either is Left |
+| `match` | Pattern match on Either |
+| `map` | Transforms the Right value |
+| `mapLeft` | Transforms the Left value |
+| `flatMap` | Chains Either-returning operations |
+| `fromOption` | Converts Option to Either |

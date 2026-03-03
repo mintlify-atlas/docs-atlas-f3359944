@@ -1,0 +1,159 @@
+---
+title: "@effect/platform"
+description: "Unified interfaces for common platform-specific services"
+---
+
+`@effect/platform` provides unified, platform-independent abstractions for Node.js, Bun, and browsers. It enables you to write code once and run it across different environments.
+
+## Installation
+
+<CodeGroup>
+```bash npm
+npm install @effect/platform
+```
+
+```bash pnpm
+pnpm add @effect/platform
+```
+
+```bash yarn
+yarn add @effect/platform
+```
+</CodeGroup>
+
+### Platform-Specific Packages
+
+Install the appropriate runtime package for your environment:
+
+<CardGroup cols={3}>
+  <Card title="Node.js" icon="node">
+    ```bash
+    npm install @effect/platform-node
+    ```
+  </Card>
+  <Card title="Bun" icon="code">
+    ```bash
+    npm install @effect/platform-bun
+    ```
+  </Card>
+  <Card title="Browser" icon="browser">
+    ```bash
+    npm install @effect/platform-browser
+    ```
+  </Card>
+</CardGroup>
+
+## Core Services
+
+### HttpClient
+
+Make HTTP requests with full type safety and composability.
+
+```ts
+import { HttpClient } from "@effect/platform"
+import { Effect } from "effect"
+
+const program = Effect.gen(function* () {
+  const client = yield* HttpClient.HttpClient
+  const response = yield* client.get("https://api.example.com/users")
+  const users = yield* response.json
+  return users
+})
+```
+
+### FileSystem
+
+Platform-independent file system operations.
+
+```ts
+import { FileSystem } from "@effect/platform"
+import { Effect } from "effect"
+
+const program = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem
+  const content = yield* fs.readFileString("config.json")
+  yield* fs.writeFileString("output.txt", content)
+})
+```
+
+### Command
+
+Execute system commands safely.
+
+```ts
+import { Command } from "@effect/platform"
+import { Effect } from "effect"
+
+const program = Effect.gen(function* () {
+  const command = Command.make("git", "status")
+  const result = yield* Command.exitCode(command)
+  yield* Effect.log(`Exit code: ${result}`)
+})
+```
+
+## HTTP API
+
+Define declarative, type-safe HTTP APIs with automatic client generation and Swagger documentation.
+
+```ts
+import {
+  HttpApi,
+  HttpApiBuilder,
+  HttpApiEndpoint,
+  HttpApiGroup
+} from "@effect/platform"
+import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
+import { Effect, Layer, Schema } from "effect"
+import { createServer } from "node:http"
+
+const User = Schema.Struct({
+  id: Schema.Number,
+  name: Schema.String
+})
+
+const api = HttpApi.make("MyApi").add(
+  HttpApiGroup.make("Users").add(
+    HttpApiEndpoint.get("getUsers", "/users").addSuccess(Schema.Array(User))
+  )
+)
+
+const usersLive = HttpApiBuilder.group(api, "Users", (handlers) =>
+  handlers.handle("getUsers", () =>
+    Effect.succeed([{ id: 1, name: "Alice" }])
+  )
+)
+
+const apiLive = HttpApiBuilder.api(api).pipe(Layer.provide(usersLive))
+
+const server = HttpApiBuilder.serve().pipe(
+  Layer.provide(apiLive),
+  Layer.provide(NodeHttpServer.layer(createServer, { port: 3000 }))
+)
+
+Layer.launch(server).pipe(NodeRuntime.runMain)
+```
+
+## Key Features
+
+- **Platform Independence**: Write once, run on Node.js, Bun, or browsers
+- **Type Safety**: Full TypeScript support with schema validation
+- **Composability**: Combine services using Effect's powerful composition
+- **Error Handling**: Built-in error types and recovery mechanisms
+- **Testability**: Easy to mock and test with dependency injection
+
+## Related Packages
+
+<CardGroup cols={2}>
+  <Card title="@effect/platform-node" href="https://www.npmjs.com/package/@effect/platform-node">
+    Node.js runtime implementation
+  </Card>
+  <Card title="@effect/platform-bun" href="https://www.npmjs.com/package/@effect/platform-bun">
+    Bun runtime implementation
+  </Card>
+  <Card title="@effect/platform-browser" href="https://www.npmjs.com/package/@effect/platform-browser">
+    Browser runtime implementation
+  </Card>
+  <Card title="API Reference" href="https://effect-ts.github.io/effect/docs/platform">
+    Complete API documentation
+  </Card>
+</CardGroup>

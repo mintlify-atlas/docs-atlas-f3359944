@@ -1,0 +1,283 @@
+---
+title: Ref
+description: Mutable references with effectful operations
+---
+
+A `Ref` is a mutable reference to a value that can be safely shared and modified across fibers. All operations on a `Ref` are effectful and atomic.
+
+## Type Signature
+
+```typescript
+interface Ref<in out A> extends Effect<A> {
+  modify<B>(f: (a: A) => readonly [B, A]): Effect<B>
+}
+```
+
+## Creating Refs
+
+### make
+
+Creates a new `Ref` with an initial value.
+
+```typescript
+import { Effect, Ref } from "effect"
+
+const program = Effect.gen(function* () {
+  const ref = yield* Ref.make(0)
+  console.log(ref)
+})
+```
+
+## Reading Values
+
+### get
+
+Retrieves the current value of a `Ref`.
+
+```typescript
+import { Effect, Ref } from "effect"
+
+const program = Effect.gen(function* () {
+  const ref = yield* Ref.make(42)
+  const value = yield* Ref.get(ref)
+  console.log(value)  // 42
+})
+```
+
+## Updating Values
+
+<Tabs>
+  <Tab title="set">
+    ```typescript
+    import { Effect, Ref } from "effect"
+
+    const program = Effect.gen(function* () {
+      const ref = yield* Ref.make(0)
+      yield* Ref.set(ref, 42)
+      const value = yield* Ref.get(ref)
+      console.log(value)  // 42
+    })
+    ```
+  </Tab>
+  <Tab title="update">
+    ```typescript
+    import { Effect, Ref } from "effect"
+
+    const program = Effect.gen(function* () {
+      const ref = yield* Ref.make(10)
+      yield* Ref.update(ref, n => n * 2)
+      const value = yield* Ref.get(ref)
+      console.log(value)  // 20
+    })
+    ```
+  </Tab>
+  <Tab title="modify">
+    ```typescript
+    import { Effect, Ref } from "effect"
+
+    const program = Effect.gen(function* () {
+      const ref = yield* Ref.make(10)
+      const old = yield* Ref.modify(ref, n => [n, n * 2])
+      console.log(old)  // 10
+      
+      const value = yield* Ref.get(ref)
+      console.log(value)  // 20
+    })
+    ```
+  </Tab>
+</Tabs>
+
+## Atomic Operations
+
+### getAndSet
+
+Atomically retrieves the current value and sets a new one.
+
+```typescript
+import { Effect, Ref } from "effect"
+
+const program = Effect.gen(function* () {
+  const ref = yield* Ref.make(10)
+  const old = yield* Ref.getAndSet(ref, 20)
+  
+  console.log(old)  // 10
+  
+  const current = yield* Ref.get(ref)
+  console.log(current)  // 20
+})
+```
+
+### getAndUpdate
+
+Atomically retrieves the current value and updates it.
+
+```typescript
+import { Effect, Ref } from "effect"
+
+const program = Effect.gen(function* () {
+  const ref = yield* Ref.make(10)
+  const old = yield* Ref.getAndUpdate(ref, n => n * 2)
+  
+  console.log(old)  // 10
+  
+  const current = yield* Ref.get(ref)
+  console.log(current)  // 20
+})
+```
+
+### updateAndGet
+
+Updates the value and returns the new value.
+
+```typescript
+import { Effect, Ref } from "effect"
+
+const program = Effect.gen(function* () {
+  const ref = yield* Ref.make(10)
+  const updated = yield* Ref.updateAndGet(ref, n => n * 2)
+  
+  console.log(updated)  // 20
+})
+```
+
+### setAndGet
+
+Sets a new value and returns it.
+
+```typescript
+import { Effect, Ref } from "effect"
+
+const program = Effect.gen(function* () {
+  const ref = yield* Ref.make(10)
+  const value = yield* Ref.setAndGet(ref, 42)
+  
+  console.log(value)  // 42
+})
+```
+
+## Conditional Updates
+
+### updateSome
+
+Updates the value only if a condition is met.
+
+```typescript
+import { Effect, Ref, Option } from "effect"
+
+const program = Effect.gen(function* () {
+  const ref = yield* Ref.make(10)
+  
+  yield* Ref.updateSome(ref, n => 
+    n > 5 ? Option.some(n * 2) : Option.none()
+  )
+  
+  const value = yield* Ref.get(ref)
+  console.log(value)  // 20
+})
+```
+
+### modifySome
+
+Modifies the value conditionally and returns a result.
+
+```typescript
+import { Effect, Ref, Option } from "effect"
+
+const program = Effect.gen(function* () {
+  const ref = yield* Ref.make(10)
+  
+  const result = yield* Ref.modifySome(
+    ref,
+    "unchanged",
+    n => n > 5 ? Option.some([n, n * 2]) : Option.none()
+  )
+  
+  console.log(result)  // 10
+})
+```
+
+## Counter Example
+
+```typescript
+import { Effect, Ref } from "effect"
+
+const makeCounter = Effect.gen(function* () {
+  const ref = yield* Ref.make(0)
+  
+  return {
+    increment: Ref.update(ref, n => n + 1),
+    decrement: Ref.update(ref, n => n - 1),
+    get: Ref.get(ref)
+  }
+})
+
+const program = Effect.gen(function* () {
+  const counter = yield* makeCounter
+  
+  yield* counter.increment
+  yield* counter.increment
+  yield* counter.decrement
+  
+  const value = yield* counter.get
+  console.log(value)  // 1
+})
+```
+
+## Shared State Example
+
+```typescript
+import { Effect, Ref, Fiber } from "effect"
+
+const program = Effect.gen(function* () {
+  const ref = yield* Ref.make(0)
+  
+  const fiber1 = yield* Effect.fork(
+    Effect.forEach(
+      Array.from({ length: 100 }, (_, i) => i),
+      () => Ref.update(ref, n => n + 1),
+      { concurrency: "unbounded" }
+    )
+  )
+  
+  const fiber2 = yield* Effect.fork(
+    Effect.forEach(
+      Array.from({ length: 100 }, (_, i) => i),
+      () => Ref.update(ref, n => n + 1),
+      { concurrency: "unbounded" }
+    )
+  )
+  
+  yield* Fiber.join(fiber1)
+  yield* Fiber.join(fiber2)
+  
+  const value = yield* Ref.get(ref)
+  console.log(value)  // 200 (always consistent)
+})
+```
+
+<Note>
+All `Ref` operations are atomic, ensuring thread-safe updates even with concurrent access from multiple fibers.
+</Note>
+
+## Use Cases
+
+- Shared mutable state across fibers
+- Counters and accumulators
+- Caching
+- State machines
+- Resource pools
+
+## Key Operations
+
+| Operation | Description |
+|-----------|-------------|
+| `make` | Creates a new Ref |
+| `get` | Reads the current value |
+| `set` | Sets a new value |
+| `update` | Updates the value with a function |
+| `modify` | Updates and returns a result |
+| `getAndSet` | Gets old value, sets new one |
+| `getAndUpdate` | Gets old value, updates |
+| `updateAndGet` | Updates, returns new value |
+| `updateSome` | Conditional update |
+| `modifySome` | Conditional modify |

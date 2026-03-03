@@ -1,0 +1,68 @@
+---
+title: RedBlackTree
+description: API reference for the RedBlackTree ordered map type
+---
+
+`RedBlackTree` is a self-balancing binary search tree for ordered key-value mappings.
+
+## Type Definition
+
+```typescript
+interface RedBlackTree<K, V> extends Iterable<[K, V]>
+```
+
+## Constructors
+
+### empty
+
+Creates an empty `RedBlackTree`.
+
+```typescript
+const empty: <K, V>(ord: Order<K>) => RedBlackTree<K, V>
+```
+
+### make
+
+Creates a `RedBlackTree` with the given ordering.
+
+```typescript
+const make: <K>(ord: Order<K>) => <Entries extends ReadonlyArray<readonly [K, any]>>(...entries: Entries) => RedBlackTree<K, Entries[number][1]>
+```
+
+## Operations
+
+### insert
+
+Inserts a key-value pair.
+
+```typescript
+const insert: <K, V>(key: K, value: V) => (self: RedBlackTree<K, V>) => RedBlackTree<K, V>
+```
+
+### getOption
+
+Retrieves a value by key.
+
+```typescript
+const getOption: <K>(key: K) => <V>(self: RedBlackTree<K, V>) => Option<V>
+```
+
+### removeFirst
+
+Removes the minimum element.
+
+```typescript
+const removeFirst: <K, V>(self: RedBlackTree<K, V>) => RedBlackTree<K, V>
+```
+
+## Example
+
+```typescript
+import { RedBlackTree, Order } from "effect"
+
+const tree = RedBlackTree.make(Order.number)([1, "a"], [2, "b"]).pipe(
+  RedBlackTree.insert(3, "c")
+)
+
+console.log(RedBlackTree.getOption(tree, 2)) // Some("b")
+```

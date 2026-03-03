@@ -1,0 +1,449 @@
+---
+title: Effect
+description: Core Effect module API reference - the fundamental building block for effect-based programs
+---
+
+The `Effect` module provides the fundamental data type and operations for creating and composing effectful programs. An `Effect<A, E, R>` describes a workflow that requires a context `R`, may fail with an error `E`, or succeed with a value `A`.
+
+## Type
+
+```ts
+interface Effect<out A, out E = never, out R = never>
+```
+
+The `Effect` interface defines a value that describes a workflow or job, which can succeed or fail.
+
+<ParamField path="A" type="type parameter">
+  The success value type
+</ParamField>
+
+<ParamField path="E" type="type parameter" default="never">
+  The error type
+</ParamField>
+
+<ParamField path="R" type="type parameter" default="never">
+  The context type required to execute the effect
+</ParamField>
+
+<ResponseField name="Effect<A, E, R>" type="Effect">
+  A workflow that requires context `R`, may fail with `E`, or succeed with `A`
+</ResponseField>
+
+## Constructors
+
+### succeed
+
+Creates an effect that succeeds with a given value.
+
+```ts
+const succeed: <A>(value: A) => Effect<A>
+```
+
+<ParamField path="value" type="A" required>
+  The success value
+</ParamField>
+
+<ResponseField name="return" type="Effect<A>">
+  An effect that succeeds with the provided value
+</ResponseField>
+
+```ts
+import { Effect } from "effect"
+
+const program = Effect.succeed(42)
+```
+
+### fail
+
+Creates an effect that fails with a given error.
+
+```ts
+const fail: <E>(error: E) => Effect<never, E>
+```
+
+<ParamField path="error" type="E" required>
+  The error value
+</ParamField>
+
+<ResponseField name="return" type="Effect<never, E>">
+  An effect that fails with the provided error
+</ResponseField>
+
+```ts
+import { Effect } from "effect"
+
+const program = Effect.fail("Something went wrong")
+```
+
+### sync
+
+Creates an effect from a synchronous side-effecting function.
+
+```ts
+const sync: <A>(evaluate: LazyArg<A>) => Effect<A>
+```
+
+<ParamField path="evaluate" type="() => A" required>
+  A thunk that produces a value
+</ParamField>
+
+<ResponseField name="return" type="Effect<A>">
+  An effect that executes the thunk when run
+</ResponseField>
+
+```ts
+import { Effect } from "effect"
+
+const program = Effect.sync(() => {
+  console.log("Hello, World!")
+  return 42
+})
+```
+
+### promise
+
+Creates an effect from a Promise.
+
+```ts
+const promise: <A>(evaluate: (signal: AbortSignal) => Promise<A>) => Effect<A>
+```
+
+<ParamField path="evaluate" type="(signal: AbortSignal) => Promise<A>" required>
+  A function that returns a Promise
+</ParamField>
+
+<ResponseField name="return" type="Effect<A>">
+  An effect that executes the promise when run
+</ResponseField>
+
+```ts
+import { Effect } from "effect"
+
+const program = Effect.promise(() =>
+  fetch("https://api.example.com/data")
+    .then(res => res.json())
+)
+```
+
+### gen
+
+Provides a generator-based API for writing effectful code.
+
+```ts
+const gen: <Eff extends YieldWrap<Effect<any, any, any>>, AEff>(
+  f: (resume: Adapter) => Generator<Eff, AEff, never>
+) => Effect<AEff, ...>
+```
+
+<ParamField path="f" type="Generator function" required>
+  A generator function that yields effects
+</ParamField>
+
+<ResponseField name="return" type="Effect<A, E, R>">
+  A composed effect from the generator
+</ResponseField>
+
+```ts
+import { Effect } from "effect"
+
+const program = Effect.gen(function* () {
+  const a = yield* Effect.succeed(1)
+  const b = yield* Effect.succeed(2)
+  return a + b
+})
+```
+
+## Sequencing
+
+### flatMap
+
+Chains effects sequentially, where the second effect depends on the result of the first.
+
+```ts
+const flatMap: {
+  <A, B, E2, R2>(f: (a: A) => Effect<B, E2, R2>): <E, R>(self: Effect<A, E, R>) => Effect<B, E | E2, R | R2>
+  <A, E, R, B, E2, R2>(self: Effect<A, E, R>, f: (a: A) => Effect<B, E2, R2>): Effect<B, E | E2, R | R2>
+}
+```
+
+<ParamField path="self" type="Effect<A, E, R>" required>
+  The first effect
+</ParamField>
+
+<ParamField path="f" type="(a: A) => Effect<B, E2, R2>" required>
+  A function that takes the success value and returns a new effect
+</ParamField>
+
+<ResponseField name="return" type="Effect<B, E | E2, R | R2>">
+  The composed effect
+</ResponseField>
+
+```ts
+import { Effect } from "effect"
+
+const program = Effect.succeed("Hello").pipe(
+  Effect.flatMap((s) => Effect.succeed(s.length))
+)
+```
+
+### andThen
+
+Sequences two effects, ignoring the result of the first.
+
+```ts
+const andThen: {
+  <A, B, E2, R2>(f: (a: A) => Effect<B, E2, R2>): <E, R>(self: Effect<A, E, R>) => Effect<B, E | E2, R | R2>
+  <B, E2, R2>(f: Effect<B, E2, R2>): <A, E, R>(self: Effect<A, E, R>) => Effect<B, E | E2, R | R2>
+  ...
+}
+```
+
+<ParamField path="self" type="Effect<A, E, R>" required>
+  The first effect to execute
+</ParamField>
+
+<ParamField path="f" type="Effect<B, E2, R2> | ((a: A) => Effect<B, E2, R2>)" required>
+  The second effect or a function returning an effect
+</ParamField>
+
+<ResponseField name="return" type="Effect<B, E | E2, R | R2>">
+  The result of the second effect
+</ResponseField>
+
+```ts
+import { Effect } from "effect"
+
+const program = Effect.sync(() => console.log("First")).pipe(
+  Effect.andThen(Effect.sync(() => console.log("Second")))
+)
+```
+
+## Mapping
+
+### map
+
+Transforms the success value of an effect.
+
+```ts
+const map: {
+  <A, B>(f: (a: A) => B): <E, R>(self: Effect<A, E, R>) => Effect<B, E, R>
+  <A, E, R, B>(self: Effect<A, E, R>, f: (a: A) => B): Effect<B, E, R>
+}
+```
+
+<ParamField path="self" type="Effect<A, E, R>" required>
+  The effect to transform
+</ParamField>
+
+<ParamField path="f" type="(a: A) => B" required>
+  The transformation function
+</ParamField>
+
+<ResponseField name="return" type="Effect<B, E, R>">
+  An effect with the transformed success value
+</ResponseField>
+
+```ts
+import { Effect } from "effect"
+
+const program = Effect.succeed(5).pipe(
+  Effect.map((n) => n * 2)
+)
+```
+
+### mapError
+
+Transforms the error value of an effect.
+
+```ts
+const mapError: {
+  <E, E2>(f: (e: E) => E2): <A, R>(self: Effect<A, E, R>) => Effect<A, E2, R>
+  <A, E, R, E2>(self: Effect<A, E, R>, f: (e: E) => E2): Effect<A, E2, R>
+}
+```
+
+<ParamField path="self" type="Effect<A, E, R>" required>
+  The effect whose error to transform
+</ParamField>
+
+<ParamField path="f" type="(e: E) => E2" required>
+  The error transformation function
+</ParamField>
+
+<ResponseField name="return" type="Effect<A, E2, R>">
+  An effect with the transformed error type
+</ResponseField>
+
+## Collecting
+
+### all
+
+Combines multiple effects into one, returning results based on the input structure.
+
+```ts
+const all: <Arg extends Iterable<Effect<any, any, any>> | Record<string, Effect<any, any, any>>, O>(
+  arg: Arg,
+  options?: O
+) => All.Return<Arg, O>
+```
+
+<ParamField path="arg" type="Iterable<Effect> | Record<string, Effect>" required>
+  A collection of effects (tuple, iterable, struct, or record)
+</ParamField>
+
+<ParamField path="options.concurrency" type="number | 'unbounded'">
+  Control concurrency level
+</ParamField>
+
+<ParamField path="options.mode" type="'default' | 'either' | 'validate'">
+  Change error handling behavior
+</ParamField>
+
+<ResponseField name="return" type="Effect<Result, E, R>">
+  Combined effect with results matching input structure
+</ResponseField>
+
+```ts
+import { Effect } from "effect"
+
+const program = Effect.all([
+  Effect.succeed(1),
+  Effect.succeed(2),
+  Effect.succeed(3)
+])
+// Effect<[number, number, number]>
+```
+
+<Note>
+  By default, `Effect.all` runs effects sequentially and short-circuits on the first error. Use `concurrency` option for parallel execution.
+</Note>
+
+## Caching
+
+### cached
+
+Returns an effect that lazily computes a result and caches it for subsequent evaluations.
+
+```ts
+const cached: <A, E, R>(self: Effect<A, E, R>) => Effect<Effect<A, E, R>>
+```
+
+<ParamField path="self" type="Effect<A, E, R>" required>
+  The effect to cache
+</ParamField>
+
+<ResponseField name="return" type="Effect<Effect<A, E, R>>">
+  An effect that produces a cached version of the original effect
+</ResponseField>
+
+```ts
+import { Effect } from "effect"
+
+const expensiveTask = Effect.sync(() => {
+  console.log("Computing...")
+  return 42
+})
+
+const program = Effect.gen(function* () {
+  const cached = yield* Effect.cached(expensiveTask)
+  yield* cached // Logs "Computing..."
+  yield* cached // Does not log (uses cached result)
+})
+```
+
+### cachedWithTTL
+
+Caches an effect's result for a specified duration.
+
+```ts
+const cachedWithTTL: {
+  (timeToLive: Duration.DurationInput): <A, E, R>(self: Effect<A, E, R>) => Effect<Effect<A, E>, never, R>
+  <A, E, R>(self: Effect<A, E, R>, timeToLive: Duration.DurationInput): Effect<Effect<A, E>, never, R>
+}
+```
+
+<ParamField path="self" type="Effect<A, E, R>" required>
+  The effect to cache
+</ParamField>
+
+<ParamField path="timeToLive" type="Duration.DurationInput" required>
+  How long to cache the result
+</ParamField>
+
+<ResponseField name="return" type="Effect<Effect<A, E>, never, R>">
+  An effect producing a time-limited cached version
+</ResponseField>
+
+```ts
+import { Effect } from "effect"
+
+const program = Effect.gen(function* () {
+  const cached = yield* Effect.cachedWithTTL(
+    Effect.sync(() => Date.now()),
+    "1 second"
+  )
+  const time1 = yield* cached
+  yield* Effect.sleep("500 millis")
+  const time2 = yield* cached // Same value
+  yield* Effect.sleep("600 millis")
+  const time3 = yield* cached // New value
+})
+```
+
+## Error Handling
+
+### catchAll
+
+Recovers from all errors with a fallback effect.
+
+```ts
+const catchAll: {
+  <E, B, E2, R2>(f: (e: E) => Effect<B, E2, R2>): <A, R>(self: Effect<A, E, R>) => Effect<A | B, E2, R | R2>
+  <A, E, R, B, E2, R2>(self: Effect<A, E, R>, f: (e: E) => Effect<B, E2, R2>): Effect<A | B, E2, R | R2>
+}
+```
+
+<ParamField path="self" type="Effect<A, E, R>" required>
+  The effect that might fail
+</ParamField>
+
+<ParamField path="f" type="(e: E) => Effect<B, E2, R2>" required>
+  Recovery function that receives the error
+</ParamField>
+
+<ResponseField name="return" type="Effect<A | B, E2, R | R2>">
+  An effect that cannot fail with the original error type
+</ResponseField>
+
+```ts
+import { Effect } from "effect"
+
+const program = Effect.fail("error").pipe(
+  Effect.catchAll((error) => Effect.succeed(`Recovered from ${error}`))
+)
+```
+
+## Guards
+
+### isEffect
+
+Checks if a value is an Effect.
+
+```ts
+const isEffect: (u: unknown) => u is Effect<unknown, unknown, unknown>
+```
+
+<ParamField path="u" type="unknown" required>
+  The value to check
+</ParamField>
+
+<ResponseField name="return" type="boolean">
+  `true` if the value is an Effect
+</ResponseField>
+
+```ts
+import { Effect } from "effect"
+
+Effect.isEffect(Effect.succeed(42)) // true
+Effect.isEffect(42) // false
+```

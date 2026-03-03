@@ -1,0 +1,355 @@
+---
+title: "Database Integration"
+description: "Using @effect/sql with PostgreSQL, MySQL, SQLite, and more"
+icon: "database"
+---
+
+Integrate databases into your Effect applications with type-safe queries, connection pooling, and migrations.
+
+## Prerequisites
+
+Install the SQL packages:
+
+```bash
+# Core SQL package
+npm install effect @effect/sql
+
+# Choose your database driver:
+npm install @effect/sql-pg        # PostgreSQL
+npm install @effect/sql-mysql2    # MySQL
+npm install @effect/sql-sqlite-node  # SQLite
+npm install @effect/sql-mssql     # SQL Server
+```
+
+## Step 1: SQLite Setup
+
+Start with SQLite for local development:
+
+```typescript sqlite-basic.ts
+import { SqlClient } from "@effect/sql"
+import { SqliteClient } from "@effect/sql-sqlite-node"
+import { Effect } from "effect"
+
+const SqlLive = SqliteClient.layer({
+  filename: "app.db"
+})
+
+const program = Effect.gen(function*() {
+  const sql = yield* SqlClient.SqlClient
+  
+  // Create table
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      email TEXT UNIQUE NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `
+  
+  // Insert data
+  yield* sql`
+    INSERT INTO users ${sql.insert({ name: "Alice", email: "alice@example.com" })}
+  `
+  
+  // Query data
+  const users = yield* sql`SELECT * FROM users`
+  console.log(users)
+})
+
+program.pipe(
+  Effect.provide(SqlLive),
+  Effect.runPromise
+)
+```
+
+## Step 2: PostgreSQL with Schema Validation
+
+Use PostgreSQL with Effect Schema for type safety:
+
+```typescript postgres-schema.ts
+import { SqlClient, SqlResolver } from "@effect/sql"
+import { PgClient } from "@effect/sql-pg"
+import { Effect, Layer, String } from "effect"
+import * as Schema from "effect/Schema"
+
+class Person extends Schema.Class<Person>("Person")({
+  id: Schema.Number,
+  name: Schema.String,
+  createdAt: Schema.DateFromSelf
+}) {}
+
+const InsertPersonSchema = Schema.Struct(Person.fields).pipe(
+  Schema.omit("id", "createdAt")
+)
+
+const program = Effect.gen(function*() {
+  const sql = yield* SqlClient.SqlClient
+  
+  // Clear table
+  yield* sql`TRUNCATE TABLE people RESTART IDENTITY CASCADE`
+  
+  // Create resolver for batch inserts
+  const Insert = yield* SqlResolver.ordered("InsertPerson", {
+    Request: InsertPersonSchema,
+    Result: Person,
+    execute: (requests) => 
+      sql`INSERT INTO people ${sql.insert(requests)} RETURNING people.*`
+  })
+  
+  // Create resolver for finding by ID
+  const GetById = yield* SqlResolver.findById("GetPersonById", {
+    Id: Schema.Number,
+    Result: Person,
+    ResultId: (result) => result.id,
+    execute: (ids) => sql`SELECT * FROM people WHERE id IN ${sql.in(ids)}`
+  })
+  
+  // Insert with batching
+  const inserted = yield* sql.withTransaction(
+    Effect.all(
+      [
+        Insert.execute({ name: "John Doe" }),
+        Insert.execute({ name: "Jane Smith" })
+      ],
+      { batching: true }
+    )
+  )
+  
+  console.log("Inserted:", inserted)
+  
+  // Query with batching
+  const results = yield* Effect.all(
+    [GetById.execute(inserted[0].id), GetById.execute(inserted[1].id)],
+    { batching: true }
+  )
+  
+  console.log("Queried:", results)
+})
+
+const PgLive = PgClient.layer({
+  database: "myapp_dev",
+  transformQueryNames: String.camelToSnake,
+  transformResultNames: String.snakeToCamel
+})
+
+program.pipe(
+  Effect.provide(PgLive),
+  Effect.tapErrorCause(Effect.logError),
+  Effect.runFork
+)
+```
+
+## Step 3: Drizzle ORM Integration
+
+Use Drizzle ORM for a more familiar query builder:
+
+```typescript drizzle-sqlite.ts
+import { SqlClient } from "@effect/sql"
+import * as SqliteDrizzle from "@effect/sql-drizzle/Sqlite"
+import { SqliteClient } from "@effect/sql-sqlite-node"
+import * as D from "drizzle-orm/sqlite-core"
+import { Effect, Layer } from "effect"
+
+// Define schema
+const users = D.sqliteTable("users", {
+  id: D.integer("id").primaryKey(),
+  name: D.text("name"),
+  email: D.text("email")
+})
+
+// Setup layers
+const SqlLive = SqliteClient.layer({
+  filename: "app.db"
+})
+
+const DrizzleLive = SqliteDrizzle.layer.pipe(
+  Layer.provide(SqlLive)
+)
+
+const DatabaseLive = Layer.mergeAll(SqlLive, DrizzleLive)
+
+// Use both SQL client and Drizzle
+const program = Effect.gen(function*() {
+  const sql = yield* SqlClient.SqlClient
+  const db = yield* SqliteDrizzle.SqliteDrizzle
+  
+  // Create table with raw SQL
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY,
+      name TEXT,
+      email TEXT
+    )
+  `
+  
+  // Clear data
+  yield* db.delete(users)
+  
+  // Insert with Drizzle
+  yield* db.insert(users).values({ id: 1, name: "Alice", email: "alice@example.com" })
+  yield* db.insert(users).values({ id: 2, name: "Bob", email: "bob@example.com" })
+  
+  // Query with Drizzle
+  const results = yield* db.select().from(users)
+  console.log(results)
+})
+
+program.pipe(
+  Effect.provide(DatabaseLive),
+  Effect.runPromise
+)
+```
+
+## Step 4: Database Migrations
+
+Manage schema changes with migrations:
+
+```typescript migrations.ts
+import { NodeFileSystem } from "@effect/platform-node"
+import { MssqlClient, MssqlMigrator } from "@effect/sql-mssql"
+import { Effect, Layer, Redacted, String } from "effect"
+import { fileURLToPath } from "node:url"
+
+const SqlLive = MssqlMigrator.layer({
+  loader: MssqlMigrator.fromFileSystem(
+    fileURLToPath(new URL("./migrations", import.meta.url))
+  )
+}).pipe(
+  Layer.provideMerge(
+    MssqlClient.layer({
+      database: "myapp",
+      server: "localhost",
+      username: "sa",
+      password: Redacted.make("password"),
+      transformQueryNames: String.camelToSnake,
+      transformResultNames: String.snakeToCamel
+    })
+  ),
+  Layer.provide(NodeFileSystem.layer)
+)
+
+const program = Effect.gen(function*() {
+  const sql = yield* MssqlClient.MssqlClient
+  
+  // Migrations run automatically
+  const users = yield* sql`SELECT * FROM users`
+  console.log(users)
+})
+
+program.pipe(
+  Effect.provide(SqlLive),
+  Effect.runPromise
+)
+```
+
+Create migration files in `migrations/` directory:
+
+```typescript migrations/0001_create_users.ts
+import type { MigrationEffect } from "@effect/sql-mssql"
+import { Effect } from "effect"
+
+export default Effect.gen(function*() {
+  yield* Effect.log("Running migration: create users table")
+  yield* this.sql`
+    CREATE TABLE users (
+      id INT PRIMARY KEY IDENTITY(1,1),
+      name VARCHAR(255) NOT NULL,
+      email VARCHAR(255) UNIQUE NOT NULL,
+      created_at DATETIME2 DEFAULT GETDATE()
+    )
+  `
+}) satisfies MigrationEffect
+```
+
+## Step 5: Transactions and Error Handling
+
+Handle transactions with automatic rollback:
+
+```typescript transactions.ts
+import { SqlClient } from "@effect/sql"
+import { PgClient } from "@effect/sql-pg"
+import { Effect } from "effect"
+
+const program = Effect.gen(function*() {
+  const sql = yield* SqlClient.SqlClient
+  
+  // Transaction with automatic rollback on error
+  yield* sql.withTransaction(
+    Effect.gen(function*() {
+      yield* sql`INSERT INTO users ${sql.insert({ name: "Alice" })}`
+      yield* sql`INSERT INTO orders ${sql.insert({ userId: 1, total: 100 })}`
+      
+      // This will rollback both inserts
+      yield* Effect.fail("Payment failed")
+    })
+  ).pipe(
+    Effect.catchAll((error) => 
+      Effect.log(`Transaction failed: ${error}`)
+    )
+  )
+  
+  // Nested transactions
+  yield* sql.withTransaction(
+    Effect.gen(function*() {
+      yield* sql`INSERT INTO users ${sql.insert({ name: "Bob" })}`
+      
+      yield* sql.withTransaction(
+        sql`INSERT INTO audit_log ${sql.insert({ action: "user_created" })}`
+      )
+    })
+  )
+})
+
+const PgLive = PgClient.layer({
+  database: "myapp"
+})
+
+program.pipe(
+  Effect.provide(PgLive),
+  Effect.runPromise
+)
+```
+
+## Connection Pooling
+
+Configure connection pools for production:
+
+```typescript pooling.ts
+import { PgClient } from "@effect/sql-pg"
+import { Config } from "effect"
+
+const PgLive = PgClient.layerConfig({
+  database: Config.string("DB_NAME"),
+  host: Config.string("DB_HOST").pipe(Config.withDefault("localhost")),
+  port: Config.number("DB_PORT").pipe(Config.withDefault(5432)),
+  username: Config.string("DB_USER"),
+  password: Config.redacted("DB_PASSWORD"),
+  maxConnections: Config.number("DB_MAX_CONNECTIONS").pipe(
+    Config.withDefault(10)
+  ),
+  connectionTTL: Config.duration("DB_CONNECTION_TTL").pipe(
+    Config.withDefault("60 seconds")
+  )
+})
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Building HTTP Server" icon="server" href="/guides/building-http-server">
+    Create APIs that use your database
+  </Card>
+  
+  <Card title="Error Handling Patterns" icon="shield-halved" href="/guides/error-handling-patterns">
+    Handle database errors gracefully
+  </Card>
+  
+  <Card title="Streaming Data" icon="water" href="/guides/streaming-data">
+    Stream large query results
+  </Card>
+  
+  <Card title="SQL API Reference" icon="book" href="/api-reference/sql/client">
+    Full SQL API documentation
+  </Card>
+</CardGroup>

@@ -1,0 +1,90 @@
+---
+title: Option
+description: API reference for the Option type - representing optional values
+---
+
+The `Option` type represents optional values. An `Option<A>` can either be `Some<A>` (containing a value) or `None` (representing absence of a value).
+
+## Type Definition
+
+```typescript
+type Option<A> = None<A> | Some<A>
+```
+
+## Constructors
+
+### none
+
+Creates an `Option` representing the absence of a value.
+
+```typescript
+const none: <A = never>() => Option<A>
+```
+
+### some
+
+Creates an `Option` containing a value.
+
+```typescript
+const some: <A>(value: A) => Option<A>
+```
+
+### fromNullable
+
+Converts a nullable value to an `Option`.
+
+```typescript
+const fromNullable: <A>(value: A | null | undefined) => Option<A>
+```
+
+## Operations
+
+### map
+
+Transforms the value inside an `Option`.
+
+```typescript
+const map: <A, B>(f: (a: A) => B) => (self: Option<A>) => Option<B>
+```
+
+### flatMap
+
+Sequences computations that return `Option` values.
+
+```typescript
+const flatMap: <A, B>(f: (a: A) => Option<B>) => (self: Option<A>) => Option<B>
+```
+
+### getOrElse
+
+Extracts the value from an `Option` or returns a default.
+
+```typescript
+const getOrElse: <B>(onNone: LazyArg<B>) => <A>(self: Option<A>) => A | B
+```
+
+### match
+
+Pattern matches on an `Option`.
+
+```typescript
+const match: <B, A, C = B>(options: {
+  readonly onNone: LazyArg<B>
+  readonly onSome: (a: A) => C
+}) => (self: Option<A>) => B | C
+```
+
+## Example
+
+```typescript
+import { Option } from "effect"
+
+const divide = (a: number, b: number): Option.Option<number> =>
+  b === 0 ? Option.none() : Option.some(a / b)
+
+const result = divide(10, 2).pipe(
+  Option.map(n => n * 2),
+  Option.getOrElse(() => 0)
+)
+console.log(result) // 10
+```

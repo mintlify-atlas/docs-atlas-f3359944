@@ -1,0 +1,403 @@
+---
+title: "Building CLI Applications"
+description: "Create command-line tools with @effect/cli"
+icon: "terminal"
+---
+
+Build type-safe, feature-rich CLI applications with commands, options, arguments, and interactive prompts.
+
+## Prerequisites
+
+Install the CLI package:
+
+```bash
+npm install effect @effect/cli @effect/platform @effect/platform-node
+```
+
+## Step 1: Simple Command
+
+Create a basic CLI with a single command:
+
+```typescript simple-cli.ts
+import { Args, Command } from "@effect/cli"
+import { NodeContext, NodeRuntime } from "@effect/platform-node"
+import { Console, Effect } from "effect"
+
+const greet = Command.make("greet", {
+  name: Args.text({ name: "name" })
+}, ({ name }) => 
+  Console.log(`Hello, ${name}!`)
+)
+
+const cli = Command.run(greet, {
+  name: "Greet CLI",
+  version: "1.0.0"
+})
+
+Effect.suspend(() => cli(process.argv)).pipe(
+  Effect.provide(NodeContext.layer),
+  NodeRuntime.runMain
+)
+```
+
+Run it:
+
+```bash
+tsx simple-cli.ts Alice
+# Output: Hello, Alice!
+```
+
+## Step 2: Commands with Options
+
+Add options to customize behavior:
+
+```typescript options-cli.ts
+import { Args, Command, Options } from "@effect/cli"
+import { NodeContext, NodeRuntime } from "@effect/platform-node"
+import { Console, Effect } from "effect"
+
+const verbose = Options.boolean("verbose").pipe(
+  Options.withAlias("v"),
+  Options.withDescription("Enable verbose output")
+)
+
+const count = Options.integer("count").pipe(
+  Options.withDefault(1),
+  Options.withDescription("Number of times to greet")
+)
+
+const greet = Command.make("greet", {
+  name: Args.text({ name: "name" }),
+  verbose,
+  count
+}, ({ name, verbose, count }) =>
+  Effect.gen(function*() {
+    for (let i = 0; i < count; i++) {
+      yield* Console.log(`Hello, ${name}!`)
+    }
+    if (verbose) {
+      yield* Console.log(`Greeted ${count} time(s)`)
+    }
+  })
+)
+
+const cli = Command.run(greet, {
+  name: "Greet CLI",
+  version: "1.0.0"
+})
+
+Effect.suspend(() => cli(process.argv)).pipe(
+  Effect.provide(NodeContext.layer),
+  NodeRuntime.runMain
+)
+```
+
+Usage:
+
+```bash
+tsx options-cli.ts Alice --count 3 --verbose
+# Output:
+# Hello, Alice!
+# Hello, Alice!
+# Hello, Alice!
+# Greeted 3 time(s)
+```
+
+## Step 3: Subcommands
+
+Organize complex CLIs with subcommands:
+
+```typescript subcommands.ts
+import { Args, Command, Options } from "@effect/cli"
+import { NodeContext, NodeRuntime } from "@effect/platform-node"
+import { Console, Effect } from "effect"
+
+// Git-like CLI structure
+const add = Command.make("add", {
+  files: Args.text({ name: "file" }).pipe(Args.repeated)
+}, ({ files }) =>
+  Console.log(`Adding files: ${files.join(", ")}`)
+).pipe(
+  Command.withDescription("Add files to staging")
+)
+
+const commit = Command.make("commit", {
+  message: Options.text("message").pipe(
+    Options.withAlias("m"),
+    Options.withDescription("Commit message")
+  )
+}, ({ message }) =>
+  Effect.gen(function*() {
+    const msg = yield* message
+    yield* Console.log(`Committing with message: ${msg}`)
+  })
+).pipe(
+  Command.withDescription("Commit staged changes")
+)
+
+const push = Command.make("push", {
+  force: Options.boolean("force").pipe(
+    Options.withAlias("f")
+  )
+}, ({ force }) =>
+  Console.log(force ? "Force pushing..." : "Pushing...")
+).pipe(
+  Command.withDescription("Push commits to remote")
+)
+
+const git = Command.make("git").pipe(
+  Command.withDescription("A simple git-like CLI"),
+  Command.withSubcommands([add, commit, push])
+)
+
+const cli = Command.run(git, {
+  name: "Git CLI",
+  version: "1.0.0"
+})
+
+Effect.suspend(() => cli(process.argv)).pipe(
+  Effect.provide(NodeContext.layer),
+  NodeRuntime.runMain
+)
+```
+
+Usage:
+
+```bash
+tsx subcommands.ts add file1.ts file2.ts
+tsx subcommands.ts commit -m "Initial commit"
+tsx subcommands.ts push --force
+```
+
+## Step 4: Configuration and State
+
+Manage persistent state with `KeyValueStore`:
+
+```typescript stateful-cli.ts
+import { Args, Command } from "@effect/cli"
+import { NodeContext, NodeKeyValueStore, NodeRuntime } from "@effect/platform-node"
+import { KeyValueStore } from "@effect/platform"
+import { Console, Effect, Layer } from "effect"
+import * as Schema from "effect/Schema"
+
+interface AppState {
+  readonly setName: (name: string) => Effect.Effect<void>
+  readonly getName: () => Effect.Effect<string | null>
+}
+
+const AppState = Effect.gen(function*() {
+  const store = yield* KeyValueStore.KeyValueStore
+  const stringStore = store.forSchema(Schema.String)
+  
+  const setName = (name: string) =>
+    stringStore.set("name", name)
+  
+  const getName = () =>
+    stringStore.get("name").pipe(
+      Effect.map((opt) => opt.pipe(
+        Effect.match({
+          onFailure: () => null,
+          onSuccess: (v) => v
+        })
+      ))
+    )
+  
+  return { setName, getName }
+})
+
+const setCommand = Command.make("set", {
+  name: Args.text({ name: "name" })
+}, ({ name }) =>
+  Effect.gen(function*() {
+    const state = yield* AppState
+    yield* state.setName(name)
+    yield* Console.log(`Name set to: ${name}`)
+  })
+)
+
+const getCommand = Command.make("get", {}, () =>
+  Effect.gen(function*() {
+    const state = yield* AppState
+    const name = yield* state.getName()
+    yield* Console.log(name ? `Stored name: ${name}` : "No name stored")
+  })
+)
+
+const app = Command.make("app").pipe(
+  Command.withSubcommands([setCommand, getCommand])
+)
+
+const StoreLive = NodeKeyValueStore.layerFileSystem("app-store")
+
+const cli = Command.run(app, {
+  name: "Stateful CLI",
+  version: "1.0.0"
+})
+
+Effect.suspend(() => cli(process.argv)).pipe(
+  Effect.provide(StoreLive),
+  Effect.provide(NodeContext.layer),
+  NodeRuntime.runMain
+)
+```
+
+## Step 5: Interactive Prompts
+
+Create interactive CLIs with prompts:
+
+```typescript interactive.ts
+import { Command, Prompt } from "@effect/cli"
+import { NodeContext, NodeRuntime, NodeTerminal } from "@effect/platform-node"
+import { Console, Effect, Layer } from "effect"
+
+const setup = Command.make("setup", {}, () =>
+  Effect.gen(function*() {
+    yield* Console.log("Welcome to the setup wizard!")
+    
+    const name = yield* Prompt.text({
+      message: "What is your name?",
+      validate: (input) => 
+        input.length > 0 ? Effect.succeed(void 0) : Effect.fail("Name required")
+    })
+    
+    const email = yield* Prompt.text({
+      message: "What is your email?"
+    })
+    
+    const agreeToTerms = yield* Prompt.confirm({
+      message: "Do you agree to the terms?",
+      initial: true
+    })
+    
+    if (!agreeToTerms) {
+      return yield* Console.log("Setup cancelled")
+    }
+    
+    yield* Console.log(`\nSetup complete!`)
+    yield* Console.log(`Name: ${name}`)
+    yield* Console.log(`Email: ${email}`)
+  })
+)
+
+const cli = Command.run(setup, {
+  name: "Setup Wizard",
+  version: "1.0.0"
+})
+
+const MainLayer = Layer.mergeAll(
+  NodeContext.layer,
+  NodeTerminal.layer
+)
+
+Effect.suspend(() => cli(process.argv)).pipe(
+  Effect.provide(MainLayer),
+  NodeRuntime.runMain
+)
+```
+
+## Step 6: Complete Example - Naval Fate
+
+A full-featured CLI with multiple commands and persistent storage:
+
+```typescript naval-fate.ts
+import { Args, Command, Options } from "@effect/cli"
+import { NodeContext, NodeKeyValueStore, NodeRuntime } from "@effect/platform-node"
+import { Console, Effect, Layer } from "effect"
+
+const nameArg = Args.text({ name: "name" }).pipe(
+  Args.withDescription("The name of the ship")
+)
+
+const xArg = Args.integer({ name: "x" })
+const yArg = Args.integer({ name: "y" })
+
+const speedOption = Options.integer("speed").pipe(
+  Options.withDescription("Speed in knots"),
+  Options.withDefault(10)
+)
+
+const shipCommand = Command.make("ship", {
+  verbose: Options.boolean("verbose")
+}).pipe(
+  Command.withDescription("Controls a ship in Naval Fate")
+)
+
+const newShipCommand = Command.make("new", {
+  name: nameArg
+}, ({ name }) =>
+  Effect.gen(function*() {
+    const { verbose } = yield* shipCommand
+    yield* Console.log(`Created ship: '${name}'`)
+    if (verbose) {
+      yield* Console.log(`Verbose mode enabled`)
+    }
+  })
+).pipe(
+  Command.withDescription("Create a new ship")
+)
+
+const moveShipCommand = Command.make("move", {
+  name: nameArg,
+  x: xArg,
+  y: yArg,
+  speed: speedOption
+}, ({ name, speed, x, y }) =>
+  Console.log(`Moving ship '${name}' to (${x}, ${y}) at ${speed} knots`)
+).pipe(
+  Command.withDescription("Move a ship")
+)
+
+const command = Command.make("naval_fate").pipe(
+  Command.withDescription("Naval Fate CLI application"),
+  Command.withSubcommands([
+    shipCommand.pipe(
+      Command.withSubcommands([newShipCommand, moveShipCommand])
+    )
+  ])
+)
+
+const StoreLive = NodeKeyValueStore.layerFileSystem("naval-fate-store")
+
+const cli = Command.run(command, {
+  name: "Naval Fate",
+  version: "1.0.0"
+})
+
+Effect.suspend(() => cli(process.argv)).pipe(
+  Effect.provide(StoreLive),
+  Effect.provide(NodeContext.layer),
+  NodeRuntime.runMain
+)
+```
+
+## Error Handling
+
+Handle CLI errors gracefully:
+
+```typescript
+Effect.suspend(() => cli(process.argv)).pipe(
+  Effect.provide(MainLayer),
+  Effect.tapErrorCause(Effect.logError),
+  NodeRuntime.runMain
+)
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Error Handling Patterns" icon="shield-halved" href="/guides/error-handling-patterns">
+    Handle errors in CLI applications
+  </Card>
+  
+  <Card title="Building HTTP Server" icon="server" href="/guides/building-http-server">
+    Build web servers with Effect
+  </Card>
+  
+  <Card title="Database Integration" icon="database" href="/guides/database-integration">
+    Add database support to your CLI
+  </Card>
+  
+  <Card title="CLI API Reference" icon="book" href="/api-reference/cli/command">
+    Full CLI API documentation
+  </Card>
+</CardGroup>

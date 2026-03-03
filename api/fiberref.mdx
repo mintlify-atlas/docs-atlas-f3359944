@@ -1,0 +1,317 @@
+---
+title: FiberRef
+---
+
+A `FiberRef` is a fiber-local variable that provides thread-local-like functionality in Effect. Each fiber has its own isolated value that is inherited by child fibers when they are forked.
+
+## Type
+
+```typescript
+interface FiberRef<in out A> extends Effect.Effect<A>
+```
+
+A `FiberRef<A>` holds a value of type `A` that is local to each fiber.
+
+## Creating FiberRefs
+
+### make
+
+Creates a new `FiberRef` with an initial value.
+
+```typescript
+import { Effect, FiberRef } from "effect"
+
+const program = Effect.gen(function* () {
+  const ref = yield* FiberRef.make(0)
+  yield* FiberRef.set(ref, 42)
+  const value = yield* FiberRef.get(ref)
+  console.log(value) // 42
+})
+```
+
+### make with fork behavior
+
+Creates a `FiberRef` with custom fork and join behavior.
+
+```typescript
+const make: <A>(
+  initial: A,
+  options?: {
+    readonly fork?: ((a: A) => A) | undefined
+    readonly join?: ((left: A, right: A) => A) | undefined
+  }
+) => Effect.Effect<FiberRef<A>, never, Scope.Scope>
+```
+
+```typescript
+import { Effect, FiberRef } from "effect"
+
+const program = Effect.gen(function* () {
+  // Counter that resets to 0 in child fibers
+  const counter = yield* FiberRef.make(0, {
+    fork: () => 0,
+    join: (parent, child) => parent + child
+  })
+})
+```
+
+### unsafeMake
+
+Unsafely creates a new `FiberRef`.
+
+```typescript
+const unsafeMake: <Value>(
+  initial: Value,
+  options?: {
+    readonly fork?: ((a: Value) => Value) | undefined
+    readonly join?: ((left: Value, right: Value) => Value) | undefined
+  }
+) => FiberRef<Value>
+```
+
+## Reading Values
+
+### get
+
+Gets the current value of the `FiberRef`.
+
+```typescript
+const get: <A>(self: FiberRef<A>) => Effect.Effect<A>
+```
+
+```typescript
+import { Effect, FiberRef } from "effect"
+
+const program = Effect.gen(function* () {
+  const ref = yield* FiberRef.make("initial")
+  const value = yield* FiberRef.get(ref)
+  console.log(value) // "initial"
+})
+```
+
+### getWith
+
+Runs an effect with the current value.
+
+```typescript
+const getWith: {
+  <A, B, E, R>(f: (a: A) => Effect.Effect<B, E, R>): (self: FiberRef<A>) => Effect.Effect<B, E, R>
+  <A, B, E, R>(self: FiberRef<A>, f: (a: A) => Effect.Effect<B, E, R>): Effect.Effect<B, E, R>
+}
+```
+
+## Writing Values
+
+### set
+
+Sets the value of the `FiberRef`.
+
+```typescript
+const set: {
+  <A>(value: A): (self: FiberRef<A>) => Effect.Effect<void>
+  <A>(self: FiberRef<A>, value: A): Effect.Effect<void>
+}
+```
+
+```typescript
+import { Effect, FiberRef } from "effect"
+
+const program = Effect.gen(function* () {
+  const ref = yield* FiberRef.make(0)
+  yield* FiberRef.set(ref, 100)
+  const value = yield* FiberRef.get(ref)
+  console.log(value) // 100
+})
+```
+
+### update
+
+Updates the value using a function.
+
+```typescript
+const update: {
+  <A>(f: (a: A) => A): (self: FiberRef<A>) => Effect.Effect<void>
+  <A>(self: FiberRef<A>, f: (a: A) => A): Effect.Effect<void>
+}
+```
+
+```typescript
+import { Effect, FiberRef } from "effect"
+
+const program = Effect.gen(function* () {
+  const counter = yield* FiberRef.make(0)
+  yield* FiberRef.update(counter, n => n + 1)
+  const value = yield* FiberRef.get(counter)
+  console.log(value) // 1
+})
+```
+
+### modify
+
+Modifies the value and returns a result.
+
+```typescript
+const modify: {
+  <A, B>(f: (a: A) => readonly [B, A]): (self: FiberRef<A>) => Effect.Effect<B>
+  <A, B>(self: FiberRef<A>, f: (a: A) => readonly [B, A]): Effect.Effect<B>
+}
+```
+
+### getAndSet
+
+Atomically gets the current value and sets a new one.
+
+```typescript
+const getAndSet: {
+  <A>(value: A): (self: FiberRef<A>) => Effect.Effect<A>
+  <A>(self: FiberRef<A>, value: A): Effect.Effect<A>
+}
+```
+
+### getAndUpdate
+
+Atomically gets the current value and updates it.
+
+```typescript
+const getAndUpdate: {
+  <A>(f: (a: A) => A): (self: FiberRef<A>) => Effect.Effect<A>
+  <A>(self: FiberRef<A>, f: (a: A) => A): Effect.Effect<A>
+}
+```
+
+### updateAndGet
+
+Updates the value and returns the new value.
+
+```typescript
+const updateAndGet: {
+  <A>(f: (a: A) => A): (self: FiberRef<A>) => Effect.Effect<A>
+  <A>(self: FiberRef<A>, f: (a: A) => A): Effect.Effect<A>
+}
+```
+
+## Resetting and Deleting
+
+### reset
+
+Resets the `FiberRef` to its initial value.
+
+```typescript
+const reset: <A>(self: FiberRef<A>) => Effect.Effect<void>
+```
+
+### delete
+
+Deletes the value of the `FiberRef`.
+
+```typescript
+const delete: <A>(self: FiberRef<A>) => Effect.Effect<void>
+```
+
+## Built-in FiberRefs
+
+Effect provides several built-in `FiberRef`s for controlling runtime behavior:
+
+### currentContext
+
+The current context.
+
+```typescript
+const currentContext: FiberRef<Context.Context<never>>
+```
+
+### currentLogLevel
+
+The current log level.
+
+```typescript
+const currentLogLevel: FiberRef<LogLevel.LogLevel>
+```
+
+### currentLoggers
+
+The current loggers.
+
+```typescript
+const currentLoggers: FiberRef<HashSet.HashSet<Logger.Logger<unknown, any>>>
+```
+
+### currentScheduler
+
+The current scheduler.
+
+```typescript
+const currentScheduler: FiberRef<Scheduler.Scheduler>
+```
+
+### currentConcurrency
+
+The current concurrency level.
+
+```typescript
+const currentConcurrency: FiberRef<number | "unbounded">
+```
+
+## Fiber-Local State Example
+
+```typescript
+import { Effect, FiberRef, Fiber } from "effect"
+
+const program = Effect.gen(function* () {
+  // Create a fiber-local counter
+  const counter = yield* FiberRef.make(0, {
+    fork: () => 0  // Reset to 0 in child fibers
+  })
+
+  // Parent fiber increments counter
+  yield* FiberRef.update(counter, n => n + 1)
+  const parentValue = yield* FiberRef.get(counter)
+  console.log(`Parent: ${parentValue}`) // Parent: 1
+
+  // Fork a child fiber
+  const fiber = yield* Effect.fork(
+    Effect.gen(function* () {
+      const childValue = yield* FiberRef.get(counter)
+      console.log(`Child: ${childValue}`) // Child: 0 (reset on fork)
+      yield* FiberRef.update(counter, n => n + 10)
+      const updated = yield* FiberRef.get(counter)
+      console.log(`Child updated: ${updated}`) // Child updated: 10
+    })
+  )
+
+  yield* Fiber.join(fiber)
+
+  // Parent value unchanged
+  const finalValue = yield* FiberRef.get(counter)
+  console.log(`Parent final: ${finalValue}`) // Parent final: 1
+})
+```
+
+## Request Context Example
+
+```typescript
+import { Effect, FiberRef } from "effect"
+
+interface RequestContext {
+  requestId: string
+  userId?: string
+}
+
+const program = Effect.gen(function* () {
+  const requestContext = yield* FiberRef.make<RequestContext>({
+    requestId: "unknown"
+  })
+
+  const handleRequest = (requestId: string, userId: string) =>
+    Effect.gen(function* () {
+      // Set request context
+      yield* FiberRef.set(requestContext, { requestId, userId })
+
+      // Context is available throughout the request
+      const ctx = yield* FiberRef.get(requestContext)
+      console.log(`Processing request ${ctx.requestId} for user ${ctx.userId}`)
+    })
+
+  yield* handleRequest("req-123", "user-456")
+})
+```

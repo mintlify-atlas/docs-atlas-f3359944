@@ -1,0 +1,77 @@
+---
+title: HashSet
+description: API reference for the HashSet immutable set type
+---
+
+`HashSet` is an immutable hash-based set data structure.
+
+## Type Definition
+
+```typescript
+interface HashSet<A> extends Iterable<A>
+```
+
+## Constructors
+
+### empty
+
+Creates an empty `HashSet`.
+
+```typescript
+const empty: <A = never>() => HashSet<A>
+```
+
+### make
+
+Creates a `HashSet` from values.
+
+```typescript
+const make: <As extends ReadonlyArray<any>>(...as: As) => HashSet<As[number]>
+```
+
+### fromIterable
+
+Creates a `HashSet` from an iterable.
+
+```typescript
+const fromIterable: <A>(iterable: Iterable<A>) => HashSet<A>
+```
+
+## Operations
+
+### add
+
+Adds an element to a `HashSet`.
+
+```typescript
+const add: <A>(value: A) => (self: HashSet<A>) => HashSet<A>
+```
+
+### has
+
+Checks if an element exists in a `HashSet`.
+
+```typescript
+const has: <A>(value: A) => (self: HashSet<A>) => boolean
+```
+
+### remove
+
+Removes an element from a `HashSet`.
+
+```typescript
+const remove: <A>(value: A) => (self: HashSet<A>) => HashSet<A>
+```
+
+## Example
+
+```typescript
+import { HashSet } from "effect"
+
+const set = HashSet.make(1, 2, 3).pipe(
+  HashSet.add(4),
+  HashSet.remove(2)
+)
+
+console.log(HashSet.has(set, 3)) // true
+```

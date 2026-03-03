@@ -1,0 +1,356 @@
+---
+title: Pool
+---
+
+A `Pool<A, E>` is a pool of items of type `A`, each of which may be associated with the acquisition and release of resources. An attempt to get an item from a pool may fail with an error of type `E`.
+
+## Type
+
+```typescript
+interface Pool<in out A, out E = never> extends Effect.Effect<A, E, Scope.Scope>
+```
+
+A `Pool<A, E>` represents a resource pool that manages the lifecycle of items.
+
+## Creating Pools
+
+### make
+
+Creates a fixed-size pool with the specified number of items.
+
+```typescript
+import { Effect, Pool, Scope } from "effect"
+
+const acquireConnection = Effect.gen(function* () {
+  console.log("Opening database connection")
+  return { query: (sql: string) => Effect.succeed(`Result: ${sql}`) }
+})
+
+const program = Effect.scoped(
+  Effect.gen(function* () {
+    const pool = yield* Pool.make({
+      acquire: acquireConnection,
+      size: 10
+    })
+
+    const conn = yield* Pool.get(pool)
+    const result = yield* conn.query("SELECT * FROM users")
+    console.log(result)
+  })
+)
+```
+
+### make with concurrency
+
+```typescript
+const make: <A, E, R>(
+  options: {
+    readonly acquire: Effect.Effect<A, E, R>
+    readonly size: number
+    readonly concurrency?: number | undefined
+    readonly targetUtilization?: number | undefined
+  }
+) => Effect.Effect<Pool<A, E>, never, Scope.Scope | R>
+```
+
+- `acquire`: Effect to create a new item
+- `size`: Number of items in the pool
+- `concurrency`: Permits per item (default: 1)
+- `targetUtilization`: When to create new items (0-1, default: 1)
+
+```typescript
+import { Effect, Pool } from "effect"
+
+const program = Effect.scoped(
+  Effect.gen(function* () {
+    const pool = yield* Pool.make({
+      acquire: Effect.succeed({ id: Math.random() }),
+      size: 5,
+      concurrency: 3, // Each item can be used by up to 3 fibers
+      targetUtilization: 0.8 // Create new items at 80% utilization
+    })
+  })
+)
+```
+
+### makeWithTTL
+
+Creates a pool with time-to-live for items.
+
+```typescript
+import { Effect, Pool, Duration } from "effect"
+
+const program = Effect.scoped(
+  Effect.gen(function* () {
+    const pool = yield* Pool.makeWithTTL({
+      acquire: Effect.sync(() => ({ created: Date.now() })),
+      min: 5,
+      max: 20,
+      timeToLive: Duration.seconds(60),
+      timeToLiveStrategy: "usage" // or "creation"
+    })
+
+    const item = yield* Pool.get(pool)
+    console.log(item.created)
+  })
+)
+```
+
+Parameters:
+- `acquire`: Effect to create a new item
+- `min`: Minimum number of items
+- `max`: Maximum number of items
+- `timeToLive`: How long items live
+- `timeToLiveStrategy`: `"usage"` (default) or `"creation"`
+- `concurrency`: Permits per item (default: 1)
+- `targetUtilization`: When to create new items (0-1, default: 1)
+
+## Using Pool Items
+
+### get
+
+Retrieves an item from the pool in a scoped effect.
+
+```typescript
+import { Effect, Pool, Scope } from "effect"
+
+const program = Effect.scoped(
+  Effect.gen(function* () {
+    const pool = yield* Pool.make({
+      acquire: Effect.succeed("resource"),
+      size: 5
+    })
+
+    // Get item - automatically released when scope closes
+    const item = yield* Pool.get(pool)
+    console.log(item)
+  })
+)
+```
+
+### Using multiple items
+
+```typescript
+import { Effect, Pool } from "effect"
+
+const program = Effect.scoped(
+  Effect.gen(function* () {
+    const pool = yield* Pool.make({
+      acquire: Effect.sync(() => ({ id: Math.random() })),
+      size: 10
+    })
+
+    // Use multiple items concurrently
+    yield* Effect.all(
+      [
+        Effect.scoped(Pool.get(pool)),
+        Effect.scoped(Pool.get(pool)),
+        Effect.scoped(Pool.get(pool))
+      ],
+      { concurrency: "unbounded" }
+    )
+  })
+)
+```
+
+### invalidate
+
+Invalidates an item, causing the pool to reallocate it.
+
+```typescript
+import { Effect, Pool } from "effect"
+
+const program = Effect.scoped(
+  Effect.gen(function* () {
+    const pool = yield* Pool.make({
+      acquire: Effect.succeed({ valid: true }),
+      size: 5
+    })
+
+    const item = yield* Pool.get(pool)
+    
+    // If item is invalid, remove it from pool
+    if (!item.valid) {
+      yield* Pool.invalidate(pool, item)
+    }
+  })
+)
+```
+
+## Database Connection Pool Example
+
+```typescript
+import { Effect, Pool } from "effect"
+
+interface Connection {
+  readonly id: number
+  query: (sql: string) => Effect.Effect<Array<unknown>>
+  close: () => Effect.Effect<void>
+}
+
+const makeConnection = (id: number): Effect.Effect<Connection> =>
+  Effect.gen(function* () {
+    console.log(`Opening connection ${id}`)
+    
+    return {
+      id,
+      query: (sql: string) =>
+        Effect.gen(function* () {
+          yield* Effect.sleep("100 millis")
+          return [{ result: sql }]
+        }),
+      close: () =>
+        Effect.sync(() => {
+          console.log(`Closing connection ${id}`)
+        })
+    }
+  })
+
+const program = Effect.scoped(
+  Effect.gen(function* () {
+    let connectionId = 0
+    
+    const pool = yield* Pool.make({
+      acquire: Effect.acquireRelease(
+        makeConnection(++connectionId),
+        conn => conn.close()
+      ),
+      size: 5
+    })
+
+    const runQuery = (sql: string) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const conn = yield* Pool.get(pool)
+          console.log(`Using connection ${conn.id}`)
+          const result = yield* conn.query(sql)
+          return result
+        })
+      )
+
+    // Run queries concurrently
+    const results = yield* Effect.all(
+      [
+        runQuery("SELECT * FROM users"),
+        runQuery("SELECT * FROM posts"),
+        runQuery("SELECT * FROM comments"),
+        runQuery("SELECT * FROM likes"),
+        runQuery("SELECT * FROM shares")
+      ],
+      { concurrency: "unbounded" }
+    )
+
+    console.log(results)
+  })
+)
+```
+
+## HTTP Client Pool Example
+
+```typescript
+import { Effect, Pool, Duration } from "effect"
+
+interface HttpClient {
+  readonly id: string
+  get: (url: string) => Effect.Effect<string>
+}
+
+const makeHttpClient = Effect.gen(function* () {
+  const id = Math.random().toString(36).substring(7)
+  console.log(`Creating HTTP client ${id}`)
+  
+  return {
+    id,
+    get: (url: string) =>
+      Effect.gen(function* () {
+        yield* Effect.sleep("200 millis")
+        return `Response from ${url}`
+      })
+  }
+})
+
+const program = Effect.scoped(
+  Effect.gen(function* () {
+    const pool = yield* Pool.makeWithTTL({
+      acquire: makeHttpClient,
+      min: 2,
+      max: 10,
+      timeToLive: Duration.seconds(30),
+      concurrency: 5 // Each client can handle 5 concurrent requests
+    })
+
+    const fetch = (url: string) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const client = yield* Pool.get(pool)
+          console.log(`Using client ${client.id}`)
+          return yield* client.get(url)
+        })
+      )
+
+    // Make 20 concurrent requests with pool of max 10 clients
+    const urls = Array.from(
+      { length: 20 },
+      (_, i) => `https://api.example.com/data/${i}`
+    )
+
+    const results = yield* Effect.all(
+      urls.map(fetch),
+      { concurrency: "unbounded" }
+    )
+
+    console.log(`Fetched ${results.length} URLs`)
+  })
+)
+```
+
+## Worker Pool Example
+
+```typescript
+import { Effect, Pool } from "effect"
+
+interface Worker {
+  readonly id: number
+  process: (data: string) => Effect.Effect<string>
+}
+
+const makeWorker = (id: number): Effect.Effect<Worker> =>
+  Effect.sync(() => ({
+    id,
+    process: (data: string) =>
+      Effect.gen(function* () {
+        console.log(`Worker ${id}: processing ${data}`)
+        yield* Effect.sleep("500 millis")
+        return `Processed: ${data}`
+      })
+  }))
+
+const program = Effect.scoped(
+  Effect.gen(function* () {
+    let workerId = 0
+    
+    const pool = yield* Pool.make({
+      acquire: makeWorker(++workerId),
+      size: 3,
+      concurrency: 2 // Each worker can handle 2 tasks concurrently
+    })
+
+    const processTask = (data: string) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const worker = yield* Pool.get(pool)
+          return yield* worker.process(data)
+        })
+      )
+
+    const tasks = Array.from({ length: 10 }, (_, i) => `task-${i}`)
+
+    const results = yield* Effect.all(
+      tasks.map(processTask),
+      { concurrency: "unbounded" }
+    )
+
+    console.log(results)
+  })
+)
+```

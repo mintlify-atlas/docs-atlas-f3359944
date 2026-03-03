@@ -1,0 +1,355 @@
+---
+title: 'Migrating from Promises'
+description: 'Learn how to migrate Promise-based code to Effect'
+icon: 'arrow-right-arrow-left'
+---
+
+Effect provides a more powerful and type-safe alternative to Promises, with built-in error handling, dependency injection, and resource management.
+
+## Why Migrate to Effect?
+
+- **Type-safe errors**: Errors are tracked in the type system
+- **Dependency management**: Built-in context for dependency injection
+- **Resource safety**: Automatic cleanup with scoped resources
+- **Composability**: Rich combinators for complex workflows
+- **Interruption**: First-class support for cancellation
+
+## Basic Conversions
+
+### Creating Effects from Promises
+
+<CodeGroup>
+```typescript Before (Promise)
+const fetchUser = async (id: string): Promise<User> => {
+  const response = await fetch(`/api/users/${id}`)
+  return response.json()
+}
+```
+
+```typescript After (Effect)
+import { Effect } from "effect"
+
+const fetchUser = (id: string): Effect.Effect<User, Error> =>
+  Effect.tryPromise({
+    try: () => fetch(`/api/users/${id}`).then(res => res.json()),
+    catch: (error) => new Error(String(error))
+  })
+```
+</CodeGroup>
+
+<Tip>
+Use `Effect.promise` for promises that never reject, or `Effect.tryPromise` when you need to handle errors.
+</Tip>
+
+### Error Handling
+
+<CodeGroup>
+```typescript Before (Promise)
+async function getUserProfile(id: string): Promise<Profile> {
+  try {
+    const user = await fetchUser(id)
+    const profile = await fetchProfile(user.profileId)
+    return profile
+  } catch (error) {
+    console.error("Failed to fetch profile:", error)
+    throw new Error("Profile not found")
+  }
+}
+```
+
+```typescript After (Effect)
+import { Effect, pipe } from "effect"
+
+class ProfileNotFound extends Error {
+  readonly _tag = "ProfileNotFound"
+}
+
+const getUserProfile = (id: string): Effect.Effect<Profile, ProfileNotFound | Error> =>
+  pipe(
+    fetchUser(id),
+    Effect.flatMap(user => fetchProfile(user.profileId)),
+    Effect.catchAll(error => Effect.fail(new ProfileNotFound()))
+  )
+```
+</CodeGroup>
+
+<Warning>
+Effect errors are typed and tracked. Don't use `console.error` - handle errors explicitly using `Effect.catchAll`, `Effect.catchTag`, or other error combinators.
+</Warning>
+
+### Sequential Operations
+
+<CodeGroup>
+```typescript Before (Promise)
+async function processOrder(orderId: string) {
+  const order = await fetchOrder(orderId)
+  const payment = await processPayment(order)
+  const shipment = await createShipment(order, payment)
+  return shipment
+}
+```
+
+```typescript After (Effect)
+const processOrder = (orderId: string) =>
+  Effect.gen(function* () {
+    const order = yield* fetchOrder(orderId)
+    const payment = yield* processPayment(order)
+    const shipment = yield* createShipment(order, payment)
+    return shipment
+  })
+```
+</CodeGroup>
+
+<Tip>
+Use `Effect.gen` for sequential operations - it's similar to async/await but with better type safety and composability.
+</Tip>
+
+### Parallel Operations
+
+<CodeGroup>
+```typescript Before (Promise)
+async function getDashboardData(userId: string) {
+  const [user, orders, notifications] = await Promise.all([
+    fetchUser(userId),
+    fetchOrders(userId),
+    fetchNotifications(userId)
+  ])
+  return { user, orders, notifications }
+}
+```
+
+```typescript After (Effect)
+const getDashboardData = (userId: string) =>
+  Effect.all({
+    user: fetchUser(userId),
+    orders: fetchOrders(userId),
+    notifications: fetchNotifications(userId)
+  }, { concurrency: "unbounded" })
+```
+</CodeGroup>
+
+### Timeouts
+
+<CodeGroup>
+```typescript Before (Promise)
+const withTimeout = <T>(promise: Promise<T>, ms: number): Promise<T> => {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("Timeout")), ms)
+    )
+  ])
+}
+
+const result = await withTimeout(fetchUser("123"), 5000)
+```
+
+```typescript After (Effect)
+import { Duration } from "effect"
+
+const result = pipe(
+  fetchUser("123"),
+  Effect.timeout(Duration.seconds(5))
+)
+```
+</CodeGroup>
+
+### Retries
+
+<CodeGroup>
+```typescript Before (Promise)
+async function fetchWithRetry<T>(
+  fn: () => Promise<T>,
+  maxRetries: number
+): Promise<T> {
+  let lastError: unknown
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await fn()
+    } catch (error) {
+      lastError = error
+      await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)))
+    }
+  }
+  throw lastError
+}
+```
+
+```typescript After (Effect)
+import { Schedule } from "effect"
+
+const fetchWithRetry = <A, E>(effect: Effect.Effect<A, E>) =>
+  pipe(
+    effect,
+    Effect.retry(
+      Schedule.exponential(Duration.seconds(1)).pipe(
+        Schedule.compose(Schedule.recurs(3))
+      )
+    )
+  )
+```
+</CodeGroup>
+
+## Resource Management
+
+<CodeGroup>
+```typescript Before (Promise)
+class Database {
+  private connection: Connection | null = null
+
+  async connect() {
+    this.connection = await createConnection()
+  }
+
+  async query(sql: string) {
+    if (!this.connection) throw new Error("Not connected")
+    return this.connection.query(sql)
+  }
+
+  async disconnect() {
+    await this.connection?.close()
+    this.connection = null
+  }
+}
+
+async function runQuery() {
+  const db = new Database()
+  try {
+    await db.connect()
+    return await db.query("SELECT * FROM users")
+  } finally {
+    await db.disconnect()
+  }
+}
+```
+
+```typescript After (Effect)
+import { Context } from "effect"
+
+class Database extends Context.Tag("Database")<
+  Database,
+  { readonly query: (sql: string) => Effect.Effect<unknown> }
+>() {}
+
+const DatabaseLive = Effect.acquireRelease(
+  Effect.tryPromise(() => createConnection()),
+  (conn) => Effect.promise(() => conn.close())
+).pipe(
+  Effect.map(conn => ({
+    query: (sql: string) => Effect.tryPromise(() => conn.query(sql))
+  })),
+  Effect.scoped
+)
+
+const runQuery = Effect.gen(function* () {
+  const db = yield* Database
+  return yield* db.query("SELECT * FROM users")
+})
+
+const program = runQuery.pipe(
+  Effect.provide(DatabaseLive)
+)
+```
+</CodeGroup>
+
+<Warning>
+Always use `Effect.acquireRelease` or `Effect.scoped` for resource management. This ensures cleanup happens even on errors or interruptions.
+</Warning>
+
+## Running Effects
+
+<CodeGroup>
+```typescript Before (Promise)
+fetchUser("123")
+  .then(user => console.log(user))
+  .catch(error => console.error(error))
+
+// Or with async/await
+try {
+  const user = await fetchUser("123")
+  console.log(user)
+} catch (error) {
+  console.error(error)
+}
+```
+
+```typescript After (Effect)
+import { Runtime } from "effect"
+
+// For top-level execution
+const program = pipe(
+  fetchUser("123"),
+  Effect.tap(user => Effect.log(user)),
+  Effect.catchAll(error => Effect.log(error))
+)
+
+Effect.runPromise(program)
+
+// Or create a runtime
+const runtime = Runtime.make()
+
+Runtime.runPromise(runtime)(program)
+```
+</CodeGroup>
+
+## Migration Strategy
+
+1. **Start at the boundaries**: Wrap external APIs with Effect first
+2. **Convert incrementally**: Use `Effect.promise` to call existing async code
+3. **Type your errors**: Define error types for better type safety
+4. **Use services**: Leverage dependency injection for testability
+5. **Test thoroughly**: Effect code is easier to test with mocked dependencies
+
+<Tip>
+You can mix Effect and Promise code during migration. Use `Effect.runPromise` to convert Effect to Promise when needed.
+</Tip>
+
+## Common Patterns
+
+### Promise.allSettled
+
+<CodeGroup>
+```typescript Before (Promise)
+const results = await Promise.allSettled([
+  fetchUser("1"),
+  fetchUser("2"),
+  fetchUser("3")
+])
+```
+
+```typescript After (Effect)
+const results = yield* Effect.forEach(
+  ["1", "2", "3"],
+  (id) => Effect.either(fetchUser(id)),
+  { concurrency: "unbounded" }
+)
+```
+</CodeGroup>
+
+### Conditional Execution
+
+<CodeGroup>
+```typescript Before (Promise)
+const user = await fetchUser(id)
+if (user.isPremium) {
+  return await fetchPremiumContent()
+}
+return await fetchBasicContent()
+```
+
+```typescript After (Effect)
+const content = yield* fetchUser(id).pipe(
+  Effect.flatMap(user =>
+    user.isPremium
+      ? fetchPremiumContent()
+      : fetchBasicContent()
+  )
+)
+```
+</CodeGroup>
+
+## Next Steps
+
+- Learn about [Testing Strategies](/guides/best-practices/testing-strategies)
+- Explore [Project Structure](/guides/best-practices/project-structure)
+- Master [Type Safety](/guides/best-practices/type-safety)

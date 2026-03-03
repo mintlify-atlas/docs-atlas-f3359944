@@ -1,0 +1,394 @@
+---
+title: Scope
+description: Scope operations, addFinalizer, and resource management
+---
+
+The `Scope` module provides resource management for Effect workflows. A `Scope` tracks finalizers and ensures they run when the scope closes.
+
+## Types
+
+### Scope
+
+```ts
+interface Scope
+```
+
+Represents a scope that manages finalizers and can fork child scopes.
+
+<ResponseField name="strategy" type="ExecutionStrategy.ExecutionStrategy">
+  The execution strategy for running finalizers
+</ResponseField>
+
+### CloseableScope
+
+```ts
+interface CloseableScope extends Scope
+```
+
+A scope that can be explicitly closed with a specified exit value.
+
+### Scope.Finalizer
+
+```ts
+type Finalizer = (exit: Exit.Exit<unknown, unknown>) => Effect.Effect<void>
+```
+
+A finalizer function that receives an `Exit` value and returns an effect.
+
+<ParamField path="exit" type="Exit.Exit<unknown, unknown>" required>
+  The exit value indicating how the scope closed
+</ParamField>
+
+<ResponseField name="return" type="Effect.Effect<void>">
+  An effect performing cleanup
+</ResponseField>
+
+## Tag
+
+### Scope
+
+A tag representing the current `Scope` in the environment.
+
+```ts
+const Scope: Context.Tag<Scope, Scope>
+```
+
+<ResponseField name="return" type="Context.Tag<Scope, Scope>">
+  The scope service tag
+</ResponseField>
+
+```ts
+import { Effect, Scope } from "effect"
+
+const program = Effect.gen(function* () {
+  const scope = yield* Scope
+  // Use the scope
+})
+```
+
+## Constructors
+
+### make
+
+Creates a new closeable scope.
+
+```ts
+const make: (
+  executionStrategy?: ExecutionStrategy.ExecutionStrategy
+) => Effect.Effect<CloseableScope>
+```
+
+<ParamField path="executionStrategy" type="ExecutionStrategy.ExecutionStrategy">
+  How finalizers should execute (defaults to sequential)
+</ParamField>
+
+<ResponseField name="return" type="Effect.Effect<CloseableScope>">
+  An effect that creates a new scope
+</ResponseField>
+
+```ts
+import { Scope, Effect } from "effect"
+
+const program = Effect.gen(function* () {
+  const scope = yield* Scope.make()
+  // Add finalizers to scope
+  // ...
+  // Close when done
+  yield* Scope.close(scope, Exit.succeed(void 0))
+})
+```
+
+## Operations
+
+### addFinalizer
+
+Adds a finalizer to a scope. The finalizer runs when the scope closes.
+
+```ts
+const addFinalizer: (
+  self: Scope,
+  finalizer: Effect.Effect<unknown>
+) => Effect.Effect<void>
+```
+
+<ParamField path="self" type="Scope" required>
+  The scope to add to
+</ParamField>
+
+<ParamField path="finalizer" type="Effect.Effect<unknown>" required>
+  The cleanup effect to run on close
+</ParamField>
+
+<ResponseField name="return" type="Effect.Effect<void>">
+  An effect that registers the finalizer
+</ResponseField>
+
+```ts
+import { Scope, Effect, Console } from "effect"
+
+const program = Effect.gen(function* () {
+  const scope = yield* Scope
+  
+  yield* Scope.addFinalizer(
+    scope,
+    Console.log("Cleaning up!")
+  )
+  
+  // When scope closes, "Cleaning up!" will be logged
+})
+```
+
+<Note>
+  Use `addFinalizer` when the finalizer doesn't need to know the exit value. For exit-aware finalizers, use `addFinalizerExit`.
+</Note>
+
+### addFinalizerExit
+
+Adds a finalizer that receives the exit value when the scope closes.
+
+```ts
+const addFinalizerExit: (
+  self: Scope,
+  finalizer: Scope.Finalizer
+) => Effect.Effect<void>
+```
+
+<ParamField path="self" type="Scope" required>
+  The scope to add to
+</ParamField>
+
+<ParamField path="finalizer" type="Scope.Finalizer" required>
+  A function receiving the exit value
+</ParamField>
+
+<ResponseField name="return" type="Effect.Effect<void>">
+  An effect that registers the finalizer
+</ResponseField>
+
+```ts
+import { Scope, Effect, Exit, Console } from "effect"
+
+const program = Effect.gen(function* () {
+  const scope = yield* Scope
+  
+  yield* Scope.addFinalizerExit(
+    scope,
+    (exit) => Exit.match(exit, {
+      onSuccess: () => Console.log("Success cleanup"),
+      onFailure: (cause) => Console.log("Failure cleanup")
+    })
+  )
+})
+```
+
+### close
+
+Closes a scope with the specified exit value, running all finalizers.
+
+```ts
+const close: (
+  self: CloseableScope,
+  exit: Exit.Exit<unknown, unknown>
+) => Effect.Effect<void>
+```
+
+<ParamField path="self" type="CloseableScope" required>
+  The scope to close
+</ParamField>
+
+<ParamField path="exit" type="Exit.Exit<unknown, unknown>" required>
+  The exit value to pass to finalizers
+</ParamField>
+
+<ResponseField name="return" type="Effect.Effect<void>">
+  An effect that closes the scope
+</ResponseField>
+
+```ts
+import { Scope, Effect, Exit } from "effect"
+
+const program = Effect.gen(function* () {
+  const scope = yield* Scope.make()
+  
+  // Add finalizers...
+  
+  // Close the scope
+  yield* Scope.close(scope, Exit.succeed(void 0))
+})
+```
+
+### fork
+
+Forks a new child scope with the specified execution strategy.
+
+```ts
+const fork: (
+  self: Scope,
+  strategy: ExecutionStrategy.ExecutionStrategy
+) => Effect.Effect<CloseableScope>
+```
+
+<ParamField path="self" type="Scope" required>
+  The parent scope
+</ParamField>
+
+<ParamField path="strategy" type="ExecutionStrategy.ExecutionStrategy" required>
+  How to execute the child scope's finalizers
+</ParamField>
+
+<ResponseField name="return" type="Effect.Effect<CloseableScope>">
+  An effect producing a child scope
+</ResponseField>
+
+<Note>
+  The child scope will automatically close when the parent scope closes.
+</Note>
+
+### extend
+
+Extends the scope of an effect without closing when it completes.
+
+```ts
+const extend: {
+  (scope: Scope): <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, Exclude<R, Scope>>
+  <A, E, R>(effect: Effect.Effect<A, E, R>, scope: Scope): Effect.Effect<A, E, Exclude<R, Scope>>
+}
+```
+
+<ParamField path="effect" type="Effect.Effect<A, E, R>" required>
+  An effect that requires a Scope
+</ParamField>
+
+<ParamField path="scope" type="Scope" required>
+  The scope to provide
+</ParamField>
+
+<ResponseField name="return" type="Effect.Effect<A, E, Exclude<R, Scope>>">
+  The effect with scope provided
+</ResponseField>
+
+```ts
+import { Scope, Effect } from "effect"
+
+const acquireResource = Effect.gen(function* () {
+  const scope = yield* Scope
+  yield* Scope.addFinalizer(scope, Effect.log("Resource released"))
+  return "resource"
+})
+
+const program = Effect.gen(function* () {
+  const outerScope = yield* Scope.make()
+  
+  // Extend the resource into the outer scope
+  const resource = yield* Scope.extend(outerScope)(acquireResource)
+  
+  // Resource won't be released until outerScope closes
+  yield* Effect.log(`Using ${resource}`)
+})
+```
+
+### use
+
+Provides a closeable scope to an effect and closes it when the effect completes.
+
+```ts
+const use: {
+  (scope: CloseableScope): <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, Exclude<R, Scope>>
+  <A, E, R>(effect: Effect.Effect<A, E, R>, scope: CloseableScope): Effect.Effect<A, E, Exclude<R, Scope>>
+}
+```
+
+<ParamField path="effect" type="Effect.Effect<A, E, R>" required>
+  An effect that requires a Scope
+</ParamField>
+
+<ParamField path="scope" type="CloseableScope" required>
+  The scope to provide and close
+</ParamField>
+
+<ResponseField name="return" type="Effect.Effect<A, E, Exclude<R, Scope>>">
+  The effect with scope managed automatically
+</ResponseField>
+
+```ts
+import { Scope, Effect } from "effect"
+
+const acquireResource = Effect.gen(function* () {
+  const scope = yield* Scope
+  yield* Scope.addFinalizer(scope, Effect.log("Cleanup"))
+  return "resource"
+})
+
+const program = Effect.gen(function* () {
+  const scope = yield* Scope.make()
+  
+  // Scope will close when acquireResource completes
+  const resource = yield* Scope.use(scope)(acquireResource)
+  
+  return resource
+})
+```
+
+## Common Patterns
+
+### Resource Management
+
+Scopes are commonly used with `Effect.acquireRelease` for safe resource management:
+
+```ts
+import { Effect, Scope } from "effect"
+
+const resource = Effect.acquireRelease(
+  Effect.sync(() => {
+    console.log("Acquiring resource")
+    return { id: 1 }
+  }),
+  (res) => Effect.sync(() => {
+    console.log(`Releasing resource ${res.id}`)
+  })
+)
+
+const program = Effect.scoped(
+  Effect.gen(function* () {
+    const res = yield* resource
+    yield* Effect.log(`Using resource ${res.id}`)
+  })
+)
+// Acquiring resource
+// Using resource 1  
+// Releasing resource 1
+```
+
+### Manual Scope Control
+
+For more control over scope lifetime:
+
+```ts
+import { Effect, Scope, Exit } from "effect"
+
+const program = Effect.gen(function* () {
+  const scope = yield* Scope.make()
+  
+  yield* Scope.addFinalizer(
+    scope,
+    Effect.log("First finalizer")
+  )
+  
+  yield* Scope.addFinalizer(
+    scope,
+    Effect.log("Second finalizer")
+  )
+  
+  // Do work...
+  
+  // Manually close when ready
+  yield* Scope.close(scope, Exit.succeed(void 0))
+})
+// Output:
+// Second finalizer
+// First finalizer
+```
+
+<Note>
+  Finalizers run in reverse order of registration (LIFO - Last In, First Out).
+</Note>

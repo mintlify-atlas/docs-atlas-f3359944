@@ -1,0 +1,77 @@
+---
+title: Chunk
+description: API reference for the Chunk immutable array type
+---
+
+`Chunk` is an immutable, array-like data structure optimized for efficient appends and concatenations.
+
+## Type Definition
+
+```typescript
+interface Chunk<A> extends Iterable<A>
+```
+
+## Constructors
+
+### empty
+
+Creates an empty `Chunk`.
+
+```typescript
+const empty: <A = never>() => Chunk<A>
+```
+
+### make
+
+Creates a `Chunk` from values.
+
+```typescript
+const make: <As extends ReadonlyArray<any>>(...as: As) => Chunk<As[number]>
+```
+
+### fromIterable
+
+Creates a `Chunk` from an iterable.
+
+```typescript
+const fromIterable: <A>(iterable: Iterable<A>) => Chunk<A>
+```
+
+## Operations
+
+### append
+
+Appends an element to a `Chunk`.
+
+```typescript
+const append: <A>(elem: A) => (self: Chunk<A>) => Chunk<A>
+```
+
+### map
+
+Transforms elements in a `Chunk`.
+
+```typescript
+const map: <A, B>(f: (a: A) => B) => (self: Chunk<A>) => Chunk<B>
+```
+
+### flatMap
+
+Maps and flattens a `Chunk`.
+
+```typescript
+const flatMap: <A, B>(f: (a: A) => Chunk<B>) => (self: Chunk<A>) => Chunk<B>
+```
+
+## Example
+
+```typescript
+import { Chunk } from "effect"
+
+const chunk = Chunk.make(1, 2, 3).pipe(
+  Chunk.append(4),
+  Chunk.map(n => n * 2)
+)
+
+console.log(Chunk.toReadonlyArray(chunk)) // [2, 4, 6, 8]
+```

@@ -1,0 +1,398 @@
+---
+title: Predicate
+description: Type guards and predicate functions
+---
+
+`Predicate` provides type-safe predicate functions and refinements for runtime type checking.
+
+## Overview
+
+A `Predicate<A>` is a function that takes a value of type `A` and returns a boolean.
+
+A `Refinement<A, B>` is a special predicate that narrows the type from `A` to `B`.
+
+```ts
+import { Predicate } from "effect"
+
+type Predicate<in A> = (a: A) => boolean
+
+type Refinement<in A, out B extends A> = (a: A) => a is B
+```
+
+## Type Guards
+
+### Primitive Types
+
+```ts
+import { Predicate } from "effect"
+
+Predicate.isString("hello") // true
+Predicate.isNumber(42) // true
+Predicate.isBoolean(true) // true
+Predicate.isBigInt(10n) // true
+Predicate.isSymbol(Symbol()) // true
+Predicate.isUndefined(undefined) // true
+Predicate.isNull(null) // true
+```
+
+### Complex Types
+
+```ts
+import { Predicate } from "effect"
+
+Predicate.isObject({}) // true
+Predicate.isRecord({}) // true
+Predicate.isArray([]) // true
+Predicate.isDate(new Date()) // true
+Predicate.isError(new Error()) // true
+Predicate.isFunction(() => {}) // true
+Predicate.isSet(new Set()) // true
+Predicate.isMap(new Map()) // true
+```
+
+### Nullability
+
+```ts
+import { Predicate } from "effect"
+
+Predicate.isNullable(null) // true
+Predicate.isNullable(undefined) // true
+Predicate.isNullable(0) // false
+
+Predicate.isNotNullable(null) // false
+Predicate.isNotNullable(undefined) // false
+Predicate.isNotNullable(0) // true
+```
+
+### Type Narrowing
+
+```ts
+import { Predicate } from "effect"
+
+const value: unknown = "hello"
+
+if (Predicate.isString(value)) {
+  // value is narrowed to string
+  console.log(value.toUpperCase())
+}
+```
+
+## hasProperty
+
+Check if value has a property.
+
+```ts
+const hasProperty: {
+  <P extends PropertyKey>(property: P): (
+    self: unknown
+  ) => self is { [K in P]: unknown }
+  <P extends PropertyKey>(self: unknown, property: P): self is { [K in P]: unknown }
+}
+```
+
+**Example:**
+
+```ts
+import { Predicate } from "effect"
+
+const value: unknown = { name: "Alice" }
+
+if (Predicate.hasProperty(value, "name")) {
+  // value is { name: unknown }
+  console.log(value.name)
+}
+```
+
+## isTagged
+
+Check for discriminated union tag.
+
+```ts
+import { Predicate } from "effect"
+
+type Shape =
+  | { _tag: "circle"; radius: number }
+  | { _tag: "square"; side: number }
+
+const isCircle = Predicate.isTagged("circle")
+
+const shape: Shape = { _tag: "circle", radius: 10 }
+
+if (isCircle(shape)) {
+  // shape is narrowed to { _tag: "circle"; radius: number }
+  console.log(shape.radius)
+}
+```
+
+## Combinators
+
+### not
+
+Negate a predicate.
+
+```ts
+const not: <A>(self: Predicate<A>) => Predicate<A>
+```
+
+```ts
+import { Predicate, Number } from "effect"
+
+const isNegative = Predicate.not(Number.greaterThan(0))
+
+isNegative(-5) // true
+isNegative(5) // false
+```
+
+### and
+
+Combine predicates with AND.
+
+```ts
+const and: {
+  <A, C extends A>(that: Refinement<A, C>): <B extends A>(
+    self: Refinement<A, B>
+  ) => Refinement<A, B & C>
+  <A>(that: Predicate<A>): (self: Predicate<A>) => Predicate<A>
+}
+```
+
+```ts
+import { Predicate } from "effect"
+
+const hasName = (u: unknown): u is { name: string } =>
+  Predicate.hasProperty(u, "name") && typeof (u as any).name === "string"
+
+const hasId = (u: unknown): u is { id: number } =>
+  Predicate.hasProperty(u, "id") && typeof (u as any).id === "number"
+
+const hasBoth = Predicate.and(hasName, hasId)
+
+const value = { name: "Alice", id: 123 }
+if (hasBoth(value)) {
+  // value is { name: string } & { id: number }
+}
+```
+
+### or
+
+Combine predicates with OR.
+
+```ts
+const or: {
+  <A, C extends A>(that: Refinement<A, C>): <B extends A>(
+    self: Refinement<A, B>
+  ) => Refinement<A, B | C>
+  <A>(that: Predicate<A>): (self: Predicate<A>) => Predicate<A>
+}
+```
+
+```ts
+import { Predicate } from "effect"
+
+const isStringOrNumber = Predicate.or(
+  Predicate.isString,
+  Predicate.isNumber
+)
+
+isStringOrNumber("hello") // true
+isStringOrNumber(42) // true
+isStringOrNumber(null) // false
+```
+
+## Structural Combinators
+
+### tuple
+
+Create predicate for tuples.
+
+```ts
+import { Predicate } from "effect"
+
+const isTuple = Predicate.tuple(
+  Predicate.isString,
+  Predicate.isNumber
+)
+
+const value: [unknown, unknown] = ["hello", 123]
+
+if (isTuple(value)) {
+  // value is narrowed to [string, number]
+}
+```
+
+### struct
+
+Create predicate for objects.
+
+```ts
+import { Predicate } from "effect"
+
+const isPerson = Predicate.struct({
+  name: Predicate.isString,
+  age: Predicate.isNumber
+})
+
+const value: { name: unknown; age: unknown } = { name: "Alice", age: 30 }
+
+if (isPerson(value)) {
+  // value is narrowed to { name: string; age: number }
+}
+```
+
+## Collection Combinators
+
+### every
+
+All predicates must pass.
+
+```ts
+const every: <A>(collection: Iterable<Predicate<A>>) => Predicate<A>
+```
+
+```ts
+import { Predicate } from "effect"
+
+const isPositive = (n: number) => n > 0
+const isEven = (n: number) => n % 2 === 0
+
+const isPositiveEven = Predicate.every([isPositive, isEven])
+
+isPositiveEven(4) // true
+isPositiveEven(-2) // false
+```
+
+### some
+
+At least one predicate must pass.
+
+```ts
+const some: <A>(collection: Iterable<Predicate<A>>) => Predicate<A>
+```
+
+```ts
+import { Predicate } from "effect"
+
+const isNegative = (n: number) => n < 0
+const isOdd = (n: number) => n % 2 !== 0
+
+const isNegativeOrOdd = Predicate.some([isNegative, isOdd])
+
+isNegativeOrOdd(-2) // true (negative)
+isNegativeOrOdd(3) // true (odd)
+isNegativeOrOdd(4) // false
+```
+
+## Logical Operators
+
+### xor
+
+Exclusive OR.
+
+```ts
+const xor: {
+  <A>(that: Predicate<A>): (self: Predicate<A>) => Predicate<A>
+  <A>(self: Predicate<A>, that: Predicate<A>): Predicate<A>
+}
+```
+
+### implies
+
+Logical implication (if-then).
+
+```ts
+const implies: {
+  <A>(consequent: Predicate<A>): (antecedent: Predicate<A>) => Predicate<A>
+  <A>(antecedent: Predicate<A>, consequent: Predicate<A>): Predicate<A>
+}
+```
+
+```ts
+import { Predicate } from "effect"
+
+type User = { isAdmin: boolean; isStaff: boolean }
+
+// If admin, then must be staff
+const isValid = Predicate.implies(
+  (u: User) => u.isAdmin,
+  (u: User) => u.isStaff
+)
+
+isValid({ isAdmin: true, isStaff: true }) // true
+isValid({ isAdmin: true, isStaff: false }) // false
+isValid({ isAdmin: false, isStaff: false }) // true (rule doesn't apply)
+```
+
+### nor, nand, eqv
+
+```ts
+const nor: {
+  <A>(that: Predicate<A>): (self: Predicate<A>) => Predicate<A>
+}
+
+const nand: {
+  <A>(that: Predicate<A>): (self: Predicate<A>) => Predicate<A>
+}
+
+const eqv: {
+  <A>(that: Predicate<A>): (self: Predicate<A>) => Predicate<A>
+}
+```
+
+## Transformation
+
+### mapInput
+
+Transform predicate input (contravariant map).
+
+```ts
+const mapInput: {
+  <B, A>(f: (b: B) => A): (self: Predicate<A>) => Predicate<B>
+  <A, B>(self: Predicate<A>, f: (b: B) => A): Predicate<B>
+}
+```
+
+```ts
+import { Predicate, Number } from "effect"
+
+const isPositive = Number.greaterThan(0)
+
+const hasPositiveLength = Predicate.mapInput(
+  isPositive,
+  (s: string) => s.length
+)
+
+hasPositiveLength("hello") // true
+hasPositiveLength("") // false
+```
+
+## Tuple Utilities
+
+### isTupleOf
+
+Check for exact tuple length.
+
+```ts
+const isTupleOf: {
+  <N extends number>(n: N): <T>(self: ReadonlyArray<T>) => self is TupleOf<N, T>
+}
+```
+
+```ts
+import { Predicate } from "effect"
+
+const arr = [1, 2, 3]
+
+if (Predicate.isTupleOf(arr, 3)) {
+  // arr is [number, number, number]
+}
+```
+
+### isTupleOfAtLeast
+
+Check for minimum tuple length.
+
+```ts
+const isTupleOfAtLeast: {
+  <N extends number>(n: N): <T>(self: ReadonlyArray<T>) => self is TupleOfAtLeast<N, T>
+}
+```

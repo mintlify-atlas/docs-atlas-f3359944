@@ -1,0 +1,249 @@
+---
+title: Option
+description: Represent optional values with Option.Some and Option.None
+---
+
+The `Option` data type represents optional values, providing a type-safe alternative to `null` or `undefined`.
+
+## Type Signature
+
+```typescript
+type Option<A> = Some<A> | None<A>
+
+interface Some<A> {
+  readonly _tag: "Some"
+  readonly value: A
+}
+
+interface None<A> {
+  readonly _tag: "None"
+}
+```
+
+## Creating Options
+
+<Tabs>
+  <Tab title="Some">
+    ```typescript
+    import { Option } from "effect"
+
+    const value = Option.some(42)
+    // Option<number>
+
+    console.log(value)
+    // { _id: 'Option', _tag: 'Some', value: 42 }
+    ```
+  </Tab>
+  <Tab title="None">
+    ```typescript
+    import { Option } from "effect"
+
+    const noValue = Option.none()
+    // Option<never>
+
+    console.log(noValue)
+    // { _id: 'Option', _tag: 'None' }
+    ```
+  </Tab>
+  <Tab title="fromNullable">
+    ```typescript
+    import { Option } from "effect"
+
+    const value1 = Option.fromNullable(42)  // Some(42)
+    const value2 = Option.fromNullable(null)  // None
+    ```
+  </Tab>
+</Tabs>
+
+## Type Guards
+
+```typescript
+import { Option } from "effect"
+
+const value = Option.some(1)
+
+if (Option.isSome(value)) {
+  console.log(value.value)  // 1
+}
+
+if (Option.isNone(value)) {
+  console.log("No value")
+}
+```
+
+## Pattern Matching
+
+### match
+
+Handle both `Some` and `None` cases.
+
+```typescript
+import { Option } from "effect"
+
+const foo = Option.some(1)
+
+const message = Option.match(foo, {
+  onNone: () => "Option is empty",
+  onSome: (value) => `Option has a value: ${value}`
+})
+
+console.log(message)
+// "Option has a value: 1"
+```
+
+## Extracting Values
+
+<Tabs>
+  <Tab title="getOrElse">
+    ```typescript
+    import { Option } from "effect"
+
+    const value = Option.some(1).pipe(
+      Option.getOrElse(() => 0)
+    )
+    // 1
+
+    const none = Option.none().pipe(
+      Option.getOrElse(() => 0)
+    )
+    // 0
+    ```
+  </Tab>
+  <Tab title="getOrNull">
+    ```typescript
+    import { Option } from "effect"
+
+    Option.getOrNull(Option.some(1))  // 1
+    Option.getOrNull(Option.none())   // null
+    ```
+  </Tab>
+  <Tab title="getOrUndefined">
+    ```typescript
+    import { Option } from "effect"
+
+    Option.getOrUndefined(Option.some(1))  // 1
+    Option.getOrUndefined(Option.none())   // undefined
+    ```
+  </Tab>
+</Tabs>
+
+## Transformations
+
+### map
+
+```typescript
+import { Option } from "effect"
+
+const result = Option.some(2).pipe(
+  Option.map(n => n * 2)
+)
+// Some(4)
+```
+
+### flatMap
+
+```typescript
+import { Option } from "effect"
+
+const result = Option.some(2).pipe(
+  Option.flatMap(n => n > 0 ? Option.some(n * 2) : Option.none())
+)
+// Some(4)
+```
+
+### filter
+
+```typescript
+import { Option } from "effect"
+
+const result = Option.some(5).pipe(
+  Option.filter(n => n > 3)
+)
+// Some(5)
+
+const filtered = Option.some(2).pipe(
+  Option.filter(n => n > 3)
+)
+// None
+```
+
+## Conversions
+
+<Tabs>
+  <Tab title="toArray">
+    ```typescript
+    import { Option } from "effect"
+
+    Option.toArray(Option.some(1))  // [1]
+    Option.toArray(Option.none())   // []
+    ```
+  </Tab>
+  <Tab title="fromIterable">
+    ```typescript
+    import { Option } from "effect"
+
+    Option.fromIterable([1, 2, 3])  // Some(1)
+    Option.fromIterable([])         // None
+    ```
+  </Tab>
+  <Tab title="getRight">
+    ```typescript
+    import { Either, Option } from "effect"
+
+    Option.getRight(Either.right("ok"))   // Some("ok")
+    Option.getRight(Either.left("err"))   // None
+    ```
+  </Tab>
+</Tabs>
+
+## Combining Options
+
+### zipWith
+
+```typescript
+import { Option } from "effect"
+
+const result = Option.zipWith(
+  Option.some(2),
+  Option.some(3),
+  (a, b) => a + b
+)
+// Some(5)
+```
+
+### orElse
+
+```typescript
+import { Option } from "effect"
+
+const result = Option.none().pipe(
+  Option.orElse(() => Option.some(42))
+)
+// Some(42)
+```
+
+<Note>
+`Option` is ideal for representing values that may or may not exist, eliminating null pointer errors and making optionality explicit in your type signatures.
+</Note>
+
+## Common Use Cases
+
+- Initial values for configurations
+- Optional fields in data structures
+- Results from partial functions (functions not defined for all inputs)
+- Safe null handling without exceptions
+
+## Key Operations
+
+| Operation | Description |
+|-----------|-------------|
+| `some` | Creates an Option containing a value |
+| `none` | Creates an empty Option |
+| `fromNullable` | Converts nullable values to Option |
+| `isSome` | Checks if Option contains a value |
+| `isNone` | Checks if Option is empty |
+| `match` | Pattern match on Option |
+| `getOrElse` | Extracts value or returns default |
+| `map` | Transforms the contained value |
+| `flatMap` | Chains Option-returning operations |
+| `filter` | Filters based on a predicate |

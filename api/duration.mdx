@@ -1,0 +1,87 @@
+---
+title: Duration
+description: API reference for the Duration type - time duration operations
+---
+
+`Duration` represents a length of time.
+
+## Type Definition
+
+```typescript
+interface Duration {
+  readonly _id: 'Duration'
+  readonly millis: number
+}
+```
+
+## Constructors
+
+### millis
+
+Creates a duration from milliseconds.
+
+```typescript
+const millis: (millis: number) => Duration
+```
+
+### seconds
+
+Creates a duration from seconds.
+
+```typescript
+const seconds: (seconds: number) => Duration
+```
+
+### minutes
+
+Creates a duration from minutes.
+
+```typescript
+const minutes: (minutes: number) => Duration
+```
+
+### hours
+
+Creates a duration from hours.
+
+```typescript
+const hours: (hours: number) => Duration
+```
+
+## Operations
+
+### toMillis
+
+Converts a duration to milliseconds.
+
+```typescript
+const toMillis: (self: Duration) => number
+```
+
+### sum
+
+Adds two durations.
+
+```typescript
+const sum: (that: Duration) => (self: Duration) => Duration
+```
+
+### multiply
+
+Multiplies a duration.
+
+```typescript
+const multiply: (factor: number) => (self: Duration) => Duration
+```
+
+## Example
+
+```typescript
+import { Duration } from "effect"
+
+const duration = Duration.seconds(30).pipe(
+  Duration.sum(Duration.minutes(1))
+)
+
+console.log(Duration.toMillis(duration)) // 90000
+```

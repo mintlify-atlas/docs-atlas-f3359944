@@ -1,0 +1,84 @@
+---
+title: Schedule
+description: API reference for the Schedule type - composable retry and repeat policies
+---
+
+`Schedule` defines a composable policy for retrying or repeating effects.
+
+## Type Definition
+
+```typescript
+interface Schedule<Out, In = unknown, R = never>
+```
+
+## Constructors
+
+### forever
+
+Repeats forever.
+
+```typescript
+const forever: Schedule<number>
+```
+
+### once
+
+Repeats once.
+
+```typescript
+const once: Schedule<void>
+```
+
+### recurs
+
+Repeats a specific number of times.
+
+```typescript
+const recurs: (n: number) => Schedule<number>
+```
+
+### exponential
+
+Exponential backoff schedule.
+
+```typescript
+const exponential: (base: Duration, factor?: number) => Schedule<Duration>
+```
+
+### fibonacci
+
+Fibonacci backoff schedule.
+
+```typescript
+const fibonacci: (one: Duration) => Schedule<Duration>
+```
+
+## Combinators
+
+### union
+
+Combines two schedules, choosing the longer delay.
+
+```typescript
+const union: <Out2, In2, R2>(that: Schedule<Out2, In2, R2>) => <Out, In, R>(self: Schedule<Out, In, R>) => Schedule<[Out, Out2], In & In2, R | R2>
+```
+
+### intersect
+
+Combines two schedules, choosing the shorter delay.
+
+```typescript
+const intersect: <Out2, In2, R2>(that: Schedule<Out2, In2, R2>) => <Out, In, R>(self: Schedule<Out, In, R>) => Schedule<[Out, Out2], In & In2, R | R2>
+```
+
+## Example
+
+```typescript
+import { Schedule, Effect } from "effect"
+
+const policy = Schedule.exponential("100 millis").pipe(
+  Schedule.union(Schedule.recurs(5))
+)
+
+Effect.retry(myEffect, policy)
+```

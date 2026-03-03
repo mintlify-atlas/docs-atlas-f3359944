@@ -1,0 +1,216 @@
+---
+title: Effect
+description: Core Effect module operations for building functional programs
+---
+
+The `Effect` module is the foundation of the Effect ecosystem, providing the core type and operations for building functional, composable programs.
+
+## Type Signature
+
+```typescript
+interface Effect<out A, out E = never, out R = never>
+```
+
+The `Effect` type represents a computation that:
+- **A**: Succeeds with a value of type `A`
+- **E**: Fails with an error of type `E`
+- **R**: Requires a context of type `R`
+
+## Creating Effects
+
+<Tabs>
+  <Tab title="Success">
+    ```typescript
+    import { Effect } from "effect"
+
+    const success = Effect.succeed(42)
+    // Effect<number, never, never>
+    ```
+  </Tab>
+  <Tab title="Failure">
+    ```typescript
+    import { Effect } from "effect"
+
+    const failure = Effect.fail("Something went wrong")
+    // Effect<never, string, never>
+    ```
+  </Tab>
+  <Tab title="Sync">
+    ```typescript
+    import { Effect } from "effect"
+
+    const sync = Effect.sync(() => {
+      console.log("Executing...")
+      return 42
+    })
+    // Effect<number, never, never>
+    ```
+  </Tab>
+  <Tab title="Async">
+    ```typescript
+    import { Effect } from "effect"
+
+    const async = Effect.promise(() => fetch("/api/data"))
+    // Effect<Response, never, never>
+    ```
+  </Tab>
+</Tabs>
+
+## Transforming Effects
+
+### map
+
+Transforms the success value of an effect.
+
+```typescript
+import { Effect } from "effect"
+
+const program = Effect.succeed(10).pipe(
+  Effect.map(n => n * 2)
+)
+// Effect<number, never, never>
+```
+
+### flatMap
+
+Chains effects together, allowing each step to depend on previous results.
+
+```typescript
+import { Effect } from "effect"
+
+const program = Effect.succeed(10).pipe(
+  Effect.flatMap(n => Effect.succeed(n * 2))
+)
+// Effect<number, never, never>
+```
+
+<Note>
+`flatMap` is essential for sequential composition of effects. Use it when the next effect depends on the result of the previous one.
+</Note>
+
+## Generator Syntax
+
+Effect provides `Effect.gen` for writing imperative-style code with effects.
+
+```typescript
+import { Effect } from "effect"
+
+const program = Effect.gen(function* () {
+  const a = yield* Effect.succeed(10)
+  const b = yield* Effect.succeed(20)
+  return a + b
+})
+// Effect<number, never, never>
+```
+
+## Error Handling
+
+<Tabs>
+  <Tab title="catchAll">
+    ```typescript
+    import { Effect } from "effect"
+
+    const program = Effect.fail("error").pipe(
+      Effect.catchAll(error => Effect.succeed(`Recovered from: ${error}`))
+    )
+    ```
+  </Tab>
+  <Tab title="orElse">
+    ```typescript
+    import { Effect } from "effect"
+
+    const program = Effect.fail("error").pipe(
+      Effect.orElse(() => Effect.succeed("fallback"))
+    )
+    ```
+  </Tab>
+  <Tab title="retry">
+    ```typescript
+    import { Effect, Schedule } from "effect"
+
+    const program = Effect.fail("error").pipe(
+      Effect.retry(Schedule.recurs(3))
+    )
+    ```
+  </Tab>
+</Tabs>
+
+## Concurrency
+
+### all
+
+Runs multiple effects concurrently.
+
+```typescript
+import { Effect } from "effect"
+
+const program = Effect.all([
+  Effect.succeed(1),
+  Effect.succeed(2),
+  Effect.succeed(3)
+])
+// Effect<[number, number, number], never, never>
+```
+
+### race
+
+Races multiple effects, returning the first to complete.
+
+```typescript
+import { Effect } from "effect"
+
+const program = Effect.race(
+  Effect.succeed(1),
+  Effect.succeed(2)
+)
+// Effect<number, never, never>
+```
+
+## Running Effects
+
+<Tabs>
+  <Tab title="runSync">
+    ```typescript
+    import { Effect } from "effect"
+
+    const result = Effect.runSync(Effect.succeed(42))
+    // 42
+    ```
+  </Tab>
+  <Tab title="runPromise">
+    ```typescript
+    import { Effect } from "effect"
+
+    const promise = Effect.runPromise(Effect.succeed(42))
+    // Promise<number>
+    ```
+  </Tab>
+  <Tab title="runFork">
+    ```typescript
+    import { Effect } from "effect"
+
+    const fiber = Effect.runFork(Effect.succeed(42))
+    // RuntimeFiber<number, never>
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+Use `runSync` only for effects without requirements. For effectful programs, use `runPromise` or provide a `Runtime`.
+</Note>
+
+## Key Operations
+
+| Operation | Description |
+|-----------|-------------|
+| `succeed` | Creates an effect that succeeds with a value |
+| `fail` | Creates an effect that fails with an error |
+| `sync` | Creates an effect from a synchronous function |
+| `async` | Creates an effect from a callback-based API |
+| `promise` | Creates an effect from a Promise |
+| `map` | Transforms the success value |
+| `flatMap` | Chains effects sequentially |
+| `catchAll` | Handles all errors |
+| `retry` | Retries a failing effect |
+| `fork` | Runs an effect in a new fiber |
+| `zip` | Combines two effects into a tuple |

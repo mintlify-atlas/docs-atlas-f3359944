@@ -1,0 +1,384 @@
+---
+title: Interruption
+description: Master Effect's interruption model for graceful cancellation and resource cleanup
+---
+
+Effect's interruption model provides structured cancellation with automatic resource cleanup.
+
+## Interruption Basics
+
+### Interrupting Fibers
+
+```typescript
+import { Effect, Fiber } from "effect"
+
+const program = Effect.gen(function*() {
+  // Start a long-running operation
+  const fiber = yield* Effect.fork(
+    Effect.gen(function*() {
+      yield* Effect.sleep("10 seconds")
+      return "completed"
+    })
+  )
+  
+  // Interrupt after 1 second
+  yield* Effect.sleep("1 second")
+  yield* Fiber.interrupt(fiber)
+  
+  console.log("Fiber interrupted")
+})
+```
+
+### Automatic Interruption
+
+Effects are automatically interrupted when their scope ends:
+
+```typescript
+import { Effect } from "effect"
+
+const program = Effect.gen(function*() {
+  // Start background task
+  yield* Effect.fork(
+    Effect.forever(
+      Effect.gen(function*() {
+        yield* Effect.sleep("1 second")
+        yield* Effect.log("Still running...")
+      })
+    )
+  )
+  
+  yield* Effect.sleep("5 seconds")
+  
+  // When this effect completes, forked fiber is automatically interrupted
+})
+```
+
+## Interruption Handlers
+
+### onInterrupt
+
+Run cleanup when interrupted:
+
+```typescript
+import { Effect, Ref } from "effect"
+
+const program = Effect.gen(function*() {
+  const cleanedUp = yield* Ref.make(false)
+  
+  const fiber = yield* Effect.fork(
+    Effect.never.pipe(
+      Effect.onInterrupt(() =>
+        Effect.gen(function*() {
+          yield* Ref.set(cleanedUp, true)
+          yield* Effect.log("Cleanup completed")
+        })
+      )
+    )
+  )
+  
+  yield* Fiber.interrupt(fiber)
+  
+  const wasCleanedUp = yield* Ref.get(cleanedUp)
+  console.log(`Cleaned up: ${wasCleanedUp}`) // true
+})
+```
+
+### ensuring
+
+Guarantee finalization regardless of success, failure, or interruption:
+
+```typescript
+import { Effect, Ref } from "effect"
+
+const program = Effect.gen(function*() {
+  const finalized = yield* Ref.make(false)
+  
+  const task = Effect.gen(function*() {
+    yield* Effect.sleep("10 seconds")
+    return "done"
+  }).pipe(
+    Effect.ensuring(Ref.set(finalized, true))
+  )
+  
+  const fiber = yield* Effect.fork(task)
+  yield* Fiber.interrupt(fiber)
+  
+  const wasFinalized = yield* Ref.get(finalized)
+  console.log(`Finalized: ${wasFinalized}`) // true
+})
+```
+
+## Uninterruptible Regions
+
+### Making Effects Uninterruptible
+
+```typescript
+import { Effect } from "effect"
+
+const criticalSection = Effect.gen(function*() {
+  yield* Effect.log("Starting critical operation")
+  yield* Effect.sleep("2 seconds")
+  yield* Effect.log("Critical operation complete")
+}).pipe(
+  Effect.uninterruptible
+)
+
+const program = Effect.gen(function*() {
+  const fiber = yield* Effect.fork(criticalSection)
+  
+  // Try to interrupt immediately
+  yield* Fiber.interrupt(fiber)
+  
+  // Interruption will wait until critical section completes
+})
+```
+
+<Warning>
+Use `uninterruptible` sparingly. Long uninterruptible regions prevent graceful shutdown and can cause resource leaks.
+</Warning>
+
+### Interruptible Regions
+
+Make specific parts interruptible within an uninterruptible region:
+
+```typescript
+import { Effect } from "effect"
+
+const program = Effect.gen(function*() {
+  // Critical setup (uninterruptible)
+  yield* Effect.log("Critical setup")
+  
+  // Safe point where interruption is allowed
+  yield* Effect.interruptible(
+    Effect.gen(function*() {
+      yield* Effect.sleep("5 seconds")
+      yield* Effect.log("Safe operation")
+    })
+  )
+  
+  // Critical cleanup (uninterruptible)
+  yield* Effect.log("Critical cleanup")
+}).pipe(
+  Effect.uninterruptible
+)
+```
+
+## Resource Management
+
+### acquireUseRelease
+
+Acquisition is uninterruptible, use is interruptible, release always runs:
+
+```typescript
+import { Effect, Ref } from "effect"
+
+const program = Effect.gen(function*() {
+  const released = yield* Ref.make(false)
+  
+  const fiber = yield* Effect.fork(
+    Effect.acquireUseRelease(
+      Effect.gen(function*() {
+        yield* Effect.log("Acquiring resource")
+        return { id: 1, name: "resource" }
+      }),
+      (resource) =>
+        Effect.gen(function*() {
+          yield* Effect.log(`Using resource ${resource.id}`)
+          yield* Effect.never // Block forever
+        }),
+      (resource) =>
+        Effect.gen(function*() {
+          yield* Effect.log(`Releasing resource ${resource.id}`)
+          yield* Ref.set(released, true)
+        })
+    )
+  )
+  
+  yield* Effect.sleep("100 millis")
+  yield* Fiber.interrupt(fiber)
+  
+  const wasReleased = yield* Ref.get(released)
+  console.log(`Released: ${wasReleased}`) // true
+})
+```
+
+### Scope-based Resource Management
+
+```typescript
+import { Effect, Scope } from "effect"
+
+const acquireResource = Effect.gen(function*() {
+  const resource = { id: 1 }
+  
+  yield* Effect.addFinalizer(() =>
+    Effect.log(`Cleanup resource ${resource.id}`)
+  )
+  
+  return resource
+})
+
+const program = Effect.gen(function*() {
+  const fiber = yield* Effect.fork(
+    Effect.scoped(
+      Effect.gen(function*() {
+        const resource = yield* acquireResource
+        yield* Effect.log(`Using ${resource.id}`)
+        yield* Effect.never
+      })
+    )
+  )
+  
+  yield* Effect.sleep("100 millis")
+  yield* Fiber.interrupt(fiber)
+  // Finalizer runs automatically
+})
+```
+
+## Interruption Checking
+
+### isInterrupted
+
+```typescript
+import { Effect } from "effect"
+
+const program = Effect.gen(function*() {
+  const interrupted = yield* Effect.isInterrupted
+  
+  if (interrupted) {
+    yield* Effect.log("Effect was interrupted")
+  }
+})
+```
+
+### allowInterrupt
+
+Create explicit interruption checkpoints:
+
+```typescript
+import { Effect } from "effect"
+
+const longComputation = Effect.gen(function*() {
+  for (let i = 0; i < 1000; i++) {
+    // Do some work
+    yield* Effect.sync(() => compute(i))
+    
+    // Check for interruption every 100 iterations
+    if (i % 100 === 0) {
+      yield* Effect.allowInterrupt
+    }
+  }
+})
+```
+
+## Disconnecting Interruption
+
+### disconnect
+
+Run an effect in a separate interruption context:
+
+```typescript
+import { Effect, Fiber } from "effect"
+
+const program = Effect.gen(function*() {
+  const fiber = yield* Effect.fork(
+    Effect.gen(function*() {
+      // This will run to completion even if parent is interrupted
+      yield* Effect.disconnect(
+        Effect.gen(function*() {
+          yield* Effect.sleep("5 seconds")
+          yield* Effect.log("Background task completed")
+        })
+      )
+      
+      yield* Effect.never
+    })
+  )
+  
+  yield* Effect.sleep("1 second")
+  yield* Fiber.interrupt(fiber)
+  
+  // Fiber is interrupted, but disconnected task continues
+})
+```
+
+## Fork Daemon
+
+### forkDaemon
+
+Create fibers that aren't automatically interrupted:
+
+```typescript
+import { Effect } from "effect"
+
+const program = Effect.gen(function*() {
+  // This fiber will outlive the parent
+  yield* Effect.forkDaemon(
+    Effect.gen(function*() {
+      yield* Effect.sleep("10 seconds")
+      yield* Effect.log("Daemon task completed")
+    })
+  )
+  
+  yield* Effect.log("Parent completing")
+  // Parent completes, daemon continues
+})
+```
+
+## Interruption Best Practices
+
+### Graceful Shutdown
+
+```typescript
+import { Effect, Fiber, Queue, Ref } from "effect"
+
+const worker = (queue: Queue.Queue<string>, running: Ref.Ref<boolean>) =>
+  Effect.gen(function*() {
+    while (yield* Ref.get(running)) {
+      const item = yield* Queue.take(queue).pipe(
+        Effect.timeout("1 second")
+      )
+      
+      if (item._tag === "Some") {
+        yield* processItem(item.value)
+      }
+    }
+    
+    yield* Effect.log("Worker shutting down gracefully")
+  }).pipe(
+    Effect.onInterrupt(() =>
+      Effect.gen(function*() {
+        yield* Ref.set(running, false)
+        yield* Effect.log("Worker interrupted, draining queue...")
+      })
+    )
+  )
+```
+
+<Tip>
+Always use `Effect.acquireUseRelease` or `Effect.addFinalizer` for resource cleanup. These ensure cleanup runs even during interruption.
+</Tip>
+
+### Testing Interruption
+
+```typescript
+import { Effect, Fiber, Ref, TestClock } from "effect"
+import { it } from "@effect/vitest"
+import { assertTrue } from "@effect/vitest/utils"
+
+it.effect("should handle interruption", () =>
+  Effect.gen(function*() {
+    const interrupted = yield* Ref.make(false)
+    
+    const fiber = yield* Effect.fork(
+      Effect.never.pipe(
+        Effect.onInterrupt(() => Ref.set(interrupted, true))
+      )
+    )
+    
+    yield* Fiber.interrupt(fiber)
+    
+    const result = yield* Ref.get(interrupted)
+    assertTrue(result)
+  })
+)
+```

@@ -1,0 +1,256 @@
+---
+title: Schema
+description: Type-safe schema definition and validation
+---
+
+`Schema` provides runtime type validation, encoding/decoding, and type inference for TypeScript.
+
+## Basic Schemas
+
+### String
+
+```ts
+import { Schema } from "effect"
+
+const schema = Schema.String
+
+type Inferred = typeof schema.Type // string
+```
+
+### Number
+
+```ts
+import { Schema } from "effect"
+
+const schema = Schema.Number
+
+type Inferred = typeof schema.Type // number
+```
+
+### Struct
+
+```ts
+import { Schema } from "effect"
+
+const User = Schema.Struct({
+  name: Schema.String,
+  age: Schema.Number
+})
+
+type User = typeof User.Type
+// { readonly name: string; readonly age: number }
+```
+
+## Validation
+
+### decodeUnknown
+
+Validates and decodes unknown input.
+
+```ts
+const decodeUnknown: <A, I, R>(
+  schema: Schema<A, I, R>,
+  options?: ParseOptions
+) => (
+  u: unknown,
+  overrideOptions?: ParseOptions
+) => Effect<A, ParseError, R>
+```
+
+**Example:**
+
+```ts
+import { Effect, Schema } from "effect"
+
+const parse = Schema.decodeUnknown(Schema.String)
+
+Effect.runPromise(parse("hello")) // "hello"
+Effect.runPromise(parse(123)) // fails with ParseError
+```
+
+### decodeSync
+
+Synchronously validates and decodes input, throwing on error.
+
+```ts
+import { Schema } from "effect"
+
+const value = Schema.decodeSync(Schema.Number)(42) // 42
+Schema.decodeSync(Schema.Number)("not a number") // throws ParseError
+```
+
+### is
+
+Type guard predicate.
+
+```ts
+import { Schema } from "effect"
+
+const isString = Schema.is(Schema.String)
+
+if (isString(value)) {
+  // value is string
+}
+```
+
+## Encoding
+
+### encode
+
+Encodes a value from Type to Encoded representation.
+
+```ts
+const encode: <A, I, R>(
+  schema: Schema<A, I, R>,
+  options?: ParseOptions
+) => (a: A, overrideOptions?: ParseOptions) => Effect<I, ParseError, R>
+```
+
+### encodeSync
+
+```ts
+import { Schema } from "effect"
+
+const User = Schema.Struct({
+  name: Schema.String,
+  age: Schema.Number
+})
+
+const encoded = Schema.encodeSync(User)({
+  name: "Alice",
+  age: 30
+})
+```
+
+## Schema Definition
+
+### Schema Interface
+
+```ts
+interface Schema<in out A, in out I = A, out R = never> {
+  readonly Type: A
+  readonly Encoded: I
+  readonly Context: R
+  readonly ast: AST.AST
+  annotations(annotations: Annotations.GenericSchema<A>): Schema<A, I, R>
+}
+```
+
+- `A` - The inferred TypeScript type
+- `I` - The encoded representation type
+- `R` - Context dependencies
+
+## Combinators
+
+### Union
+
+```ts
+import { Schema } from "effect"
+
+const StringOrNumber = Schema.Union(Schema.String, Schema.Number)
+
+type T = typeof StringOrNumber.Type // string | number
+```
+
+### Array
+
+```ts
+import { Schema } from "effect"
+
+const Numbers = Schema.Array(Schema.Number)
+
+type T = typeof Numbers.Type // readonly number[]
+```
+
+### Tuple
+
+```ts
+import { Schema } from "effect"
+
+const Pair = Schema.Tuple(Schema.String, Schema.Number)
+
+type T = typeof Pair.Type // readonly [string, number]
+```
+
+### Literal
+
+```ts
+import { Schema } from "effect"
+
+const Status = Schema.Literal("pending", "active", "completed")
+
+type Status = typeof Status.Type
+// "pending" | "active" | "completed"
+```
+
+## Transformations
+
+### transform
+
+Create schema with bidirectional transformations.
+
+```ts
+import { Schema } from "effect"
+
+const schema = Schema.transform(
+  Schema.String,
+  Schema.Number,
+  {
+    strict: true,
+    decode: (s) => s.length,
+    encode: (n) => "x".repeat(n)
+  }
+)
+```
+
+## Extracting Schemas
+
+### typeSchema
+
+Extract the Type portion of a schema.
+
+```ts
+const typeSchema: <A, I, R>(schema: Schema<A, I, R>) => SchemaClass<A>
+```
+
+### encodedSchema
+
+Extract the Encoded portion of a schema.
+
+```ts
+const encodedSchema: <A, I, R>(schema: Schema<A, I, R>) => SchemaClass<I>
+```
+
+## Type Utilities
+
+### Schema.Type
+
+Extract the type from a schema.
+
+```ts
+import { Schema } from "effect"
+
+const User = Schema.Struct({
+  name: Schema.String,
+  age: Schema.Number
+})
+
+type User = Schema.Schema.Type<typeof User>
+// { readonly name: string; readonly age: number }
+```
+
+### Schema.Encoded
+
+Extract the encoded type.
+
+```ts
+type Encoded<S> = S extends Schema.Variance<infer _A, infer I, infer _R> ? I : never
+```
+
+### Schema.Context
+
+Extract the context dependencies.
+
+```ts
+type Context<S> = S extends Schema.Variance<infer _A, infer _I, infer R> ? R : never
+```

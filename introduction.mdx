@@ -1,0 +1,96 @@
+---
+title: Introduction to Effect
+description: A powerful TypeScript framework for building production-grade applications with built-in error handling, concurrency, and dependency injection
+---
+
+Effect is a powerful TypeScript framework designed to help developers build robust, scalable, and maintainable applications. It provides a unified approach to handling errors, managing resources, controlling concurrency, and structuring dependencies.
+
+## Why Effect?
+
+Effect transforms how you write TypeScript applications by providing a complete toolkit for managing side effects and complex application logic:
+
+<CardGroup cols={2}>
+  <Card title="Type-Safe Error Handling" icon="shield-check">
+    Track errors at the type level and handle them explicitly, eliminating unexpected runtime failures.
+  </Card>
+  
+  <Card title="Structured Concurrency" icon="arrows-split">
+    Built-in fiber-based concurrency with automatic resource cleanup and interruption handling.
+  </Card>
+  
+  <Card title="Dependency Injection" icon="plug">
+    Type-safe dependency management through Context and Layer, making testing and composition effortless.
+  </Card>
+  
+  <Card title="Resource Safety" icon="lock">
+    Automatic resource acquisition and release with Scope, ensuring no leaks even on failures.
+  </Card>
+</CardGroup>
+
+## Your First Effect Program
+
+Here's a simple example showcasing Effect's generator-based syntax with built-in error handling:
+
+```typescript
+import { Effect, Console } from "effect"
+
+const program = Effect.gen(function* () {
+  const user = yield* fetchUser(123)
+  const posts = yield* fetchUserPosts(user.id)
+  yield* Console.log(`User ${user.name} has ${posts.length} posts`)
+  return posts
+})
+
+const fetchUser = (id: number) =>
+  Effect.tryPromise({
+    try: () => fetch(`/api/users/${id}`).then(r => r.json()),
+    catch: () => new Error("Failed to fetch user")
+  })
+
+const fetchUserPosts = (userId: number) =>
+  Effect.tryPromise({
+    try: () => fetch(`/api/users/${userId}/posts`).then(r => r.json()),
+    catch: () => new Error("Failed to fetch posts")
+  })
+
+// Run the program
+Effect.runPromise(program).then(console.log)
+```
+
+Notice how errors are tracked in the type system and async operations compose naturally using `yield*`.
+
+## Core Concepts
+
+The `Effect<A, E, R>` type represents a computation that:
+- Succeeds with a value of type `A`
+- Fails with an error of type `E`
+- Requires a context of type `R`
+
+This tri-parameter approach gives you complete visibility into what your program does, what can go wrong, and what it needs to run.
+
+## Get Started
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Build your first Effect application in 5 minutes
+  </Card>
+  
+  <Card title="Installation" icon="download" href="/installation">
+    Complete setup guide with TypeScript configuration
+  </Card>
+</CardGroup>
+
+## What You'll Learn
+
+Effect is more than a library—it's a comprehensive approach to building TypeScript applications:
+
+- **Error Management**: Never lose track of errors with type-level error tracking
+- **Concurrency Primitives**: Fibers, queues, semaphores, and more for safe concurrent programming
+- **Resource Management**: Automatic cleanup with `acquireRelease` and `Scope`
+- **Dependency Injection**: Context and Layer for modular, testable code
+- **Observability**: Built-in tracing, metrics, and structured logging
+- **Data Validation**: Schema for runtime type validation and transformation
+
+<Note>
+  Effect requires TypeScript 5.4 or newer with strict mode enabled. See the [Installation](/installation) guide for complete setup instructions.
+</Note>

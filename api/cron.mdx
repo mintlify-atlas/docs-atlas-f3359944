@@ -1,0 +1,83 @@
+---
+title: Cron
+description: API reference for Cron expressions and scheduling
+---
+
+`Cron` provides utilities for working with cron expressions and scheduled tasks.
+
+## Type Definition
+
+```typescript
+interface Cron {
+  readonly _id: 'Cron'
+}
+```
+
+## Constructors
+
+### parse
+
+Parses a cron expression string.
+
+```typescript
+const parse: (expression: string) => Either<CronError, Cron>
+```
+
+### make
+
+Creates a Cron from components.
+
+```typescript
+const make: (options: {
+  minutes?: string
+  hours?: string
+  days?: string
+  months?: string
+  weekdays?: string
+}) => Cron
+```
+
+## Operations
+
+### next
+
+Calculates the next occurrence.
+
+```typescript
+const next: (now: DateTime) => (self: Cron) => DateTime
+```
+
+### schedule
+
+Creates a Schedule from a Cron expression.
+
+```typescript
+const schedule: (cron: Cron) => Schedule<DateTime>
+```
+
+### match
+
+Checks if a DateTime matches the cron expression.
+
+```typescript
+const match: (date: DateTime) => (self: Cron) => boolean
+```
+
+## Example
+
+```typescript
+import { Cron, Effect, Schedule } from "effect"
+
+const program = Effect.gen(function* () {
+  const cron = Cron.parse("0 9 * * MON-FRI").pipe(
+    Effect.orDie
+  )
+  
+  const schedule = Cron.schedule(cron)
+  
+  yield* Effect.repeat(
+    Effect.log("Running daily task"),
+    schedule
+  )
+})
+```

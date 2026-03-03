@@ -1,0 +1,364 @@
+---
+title: Schedule
+description: Define recurring schedules for retry and repeat operations
+---
+
+A `Schedule` defines a recurring schedule that consumes input values and produces output values, determining when to continue or halt execution.
+
+## Type Signature
+
+```typescript
+interface Schedule<out Out, in In = unknown, out R = never> {
+  readonly initial: any
+  step(
+    now: number,
+    input: In,
+    state: any
+  ): Effect<readonly [any, Out, ScheduleDecision], never, R>
+}
+```
+
+## Basic Schedules
+
+<Tabs>
+  <Tab title="once">
+    ```typescript
+    import { Effect, Schedule } from "effect"
+
+    const program = Effect.repeat(
+      Effect.log("Hello"),
+      Schedule.once
+    )
+    // Executes twice (initial + 1 repeat)
+    ```
+  </Tab>
+  <Tab title="recurs">
+    ```typescript
+    import { Effect, Schedule } from "effect"
+
+    const program = Effect.repeat(
+      Effect.log("Hello"),
+      Schedule.recurs(3)
+    )
+    // Executes 4 times (initial + 3 repeats)
+    ```
+  </Tab>
+  <Tab title="forever">
+    ```typescript
+    import { Effect, Schedule } from "effect"
+
+    const program = Effect.repeat(
+      Effect.log("Hello"),
+      Schedule.forever
+    )
+    // Executes indefinitely
+    ```
+  </Tab>
+</Tabs>
+
+## Time-Based Schedules
+
+### spaced
+
+Fixed delay between executions.
+
+```typescript
+import { Effect, Schedule } from "effect"
+
+const program = Effect.repeat(
+  Effect.log("tick"),
+  Schedule.spaced("1 second")
+)
+// Executes every 1 second
+```
+
+### fixed
+
+Fixed interval from start of execution.
+
+```typescript
+import { Effect, Schedule } from "effect"
+
+const program = Effect.repeat(
+  Effect.log("tick"),
+  Schedule.fixed("1 second")
+)
+// Maintains exact 1-second intervals
+```
+
+### exponential
+
+Exponentially increasing delays.
+
+```typescript
+import { Effect, Schedule } from "effect"
+
+const program = Effect.retry(
+  Effect.fail("error"),
+  Schedule.exponential("10 millis")
+)
+// Delays: 10ms, 20ms, 40ms, 80ms, ...
+```
+
+### fibonacci
+
+Fibonacci sequence delays.
+
+```typescript
+import { Effect, Schedule } from "effect"
+
+const program = Effect.retry(
+  Effect.fail("error"),
+  Schedule.fibonacci("10 millis")
+)
+// Delays: 10ms, 10ms, 20ms, 30ms, 50ms, ...
+```
+
+## Combining Schedules
+
+### compose
+
+Runs schedules sequentially.
+
+```typescript
+import { Effect, Schedule } from "effect"
+
+const schedule = Schedule.recurs(3).pipe(
+  Schedule.compose(Schedule.spaced("1 second"))
+)
+
+const program = Effect.repeat(Effect.log("tick"), schedule)
+// 3 repetitions, 1 second apart
+```
+
+### union
+
+Combines schedules, continuing if either wants to continue.
+
+```typescript
+import { Effect, Schedule } from "effect"
+
+const schedule = Schedule.union(
+  Schedule.recurs(5),
+  Schedule.spaced("2 seconds")
+)
+
+const program = Effect.repeat(Effect.log("tick"), schedule)
+// Continues for either 5 repeats OR 2-second intervals
+```
+
+### intersect
+
+Combines schedules, continuing only if both want to continue.
+
+```typescript
+import { Effect, Schedule } from "effect"
+
+const schedule = Schedule.intersect(
+  Schedule.recurs(10),
+  Schedule.spaced("1 second")
+)
+
+const program = Effect.repeat(Effect.log("tick"), schedule)
+// 10 repeats AND 1-second intervals
+```
+
+## Conditional Schedules
+
+### whileInput
+
+Continues while input satisfies a condition.
+
+```typescript
+import { Effect, Schedule } from "effect"
+
+const schedule = Schedule.whileInput<number>(n => n < 5)
+
+const program = Effect.repeatOrElse(
+  Effect.succeed(Math.random() * 10),
+  schedule,
+  () => Effect.log("Stopped")
+)
+```
+
+### whileOutput
+
+Continues while output satisfies a condition.
+
+```typescript
+import { Effect, Schedule } from "effect"
+
+const schedule = Schedule.recurs(10).pipe(
+  Schedule.whileOutput(n => n < 5)
+)
+
+const program = Effect.repeat(Effect.log("tick"), schedule)
+// Stops after 5 repetitions
+```
+
+### untilInput
+
+Continues until input satisfies a condition.
+
+```typescript
+import { Effect, Schedule } from "effect"
+
+const schedule = Schedule.untilInput<number>(n => n >= 5)
+
+const program = Effect.repeatOrElse(
+  Effect.succeed(Math.random() * 10),
+  schedule,
+  () => Effect.log("Stopped")
+)
+```
+
+## Retry Patterns
+
+### Exponential Backoff with Limit
+
+```typescript
+import { Effect, Schedule } from "effect"
+
+const retryPolicy = Schedule.exponential("10 millis").pipe(
+  Schedule.intersect(Schedule.recurs(5))
+)
+
+const program = Effect.retry(
+  Effect.fail("temporary error"),
+  retryPolicy
+)
+// Retries up to 5 times with exponential backoff
+```
+
+### Conditional Retry
+
+```typescript
+import { Effect, Schedule } from "effect"
+
+type ApiError = { code: number; message: string }
+
+const retryPolicy = Schedule.whileInput<ApiError>(
+  error => error.code >= 500
+).pipe(
+  Schedule.compose(Schedule.exponential("100 millis"))
+)
+
+const program = Effect.retry(
+  Effect.fail({ code: 503, message: "Service Unavailable" }),
+  retryPolicy
+)
+// Only retries server errors (5xx)
+```
+
+## Repeat Patterns
+
+### Fixed Interval with Count
+
+```typescript
+import { Effect, Schedule } from "effect"
+
+const schedule = Schedule.spaced("1 second").pipe(
+  Schedule.intersect(Schedule.recurs(10))
+)
+
+const program = Effect.repeat(
+  Effect.log("Polling..."),
+  schedule
+)
+// Polls every 1 second, up to 10 times
+```
+
+### Collect Outputs
+
+```typescript
+import { Effect, Schedule } from "effect"
+
+const schedule = Schedule.recurs(5).pipe(
+  Schedule.collectAll
+)
+
+const program = Effect.repeat(Effect.succeed(42), schedule)
+// Returns array of all outputs
+```
+
+## Transformations
+
+### map
+
+```typescript
+import { Effect, Schedule } from "effect"
+
+const schedule = Schedule.recurs(5).pipe(
+  Schedule.map(n => `Attempt ${n + 1}`)
+)
+
+const program = Effect.repeat(Effect.log("tick"), schedule)
+```
+
+### as
+
+```typescript
+import { Effect, Schedule } from "effect"
+
+const schedule = Schedule.recurs(5).pipe(
+  Schedule.as("done")
+)
+
+const program = Effect.repeat(Effect.log("tick"), schedule)
+```
+
+### delayed
+
+```typescript
+import { Effect, Schedule } from "effect"
+
+const schedule = Schedule.recurs(3).pipe(
+  Schedule.delayed(() => "1 second")
+)
+
+const program = Effect.repeat(Effect.log("tick"), schedule)
+// 1 second delay before each repetition
+```
+
+## Jittering
+
+```typescript
+import { Effect, Schedule } from "effect"
+
+const schedule = Schedule.exponential("10 millis").pipe(
+  Schedule.jittered
+)
+
+const program = Effect.retry(
+  Effect.fail("error"),
+  schedule
+)
+// Adds randomness to prevent thundering herd
+```
+
+<Note>
+Schedules can be used with both `Effect.retry` for error recovery and `Effect.repeat` for recurring executions.
+</Note>
+
+## Use Cases
+
+- Retry logic with backoff
+- Polling operations
+- Rate limiting
+- Periodic tasks
+- Circuit breaker patterns
+
+## Key Operations
+
+| Operation | Description |
+|-----------|-------------|
+| `once` | Executes once |
+| `recurs` | Repeats N times |
+| `forever` | Repeats indefinitely |
+| `spaced` | Fixed delays between executions |
+| `exponential` | Exponential backoff |
+| `fibonacci` | Fibonacci delays |
+| `union` | Combines with OR logic |
+| `intersect` | Combines with AND logic |
+| `whileInput` | Conditional on input |
+| `jittered` | Adds randomness to delays |

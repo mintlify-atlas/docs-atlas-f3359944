@@ -1,0 +1,507 @@
+---
+title: 'Performance Optimization'
+description: 'Learn techniques to optimize Effect applications for better performance'
+icon: 'gauge-high'
+---
+
+Effect is designed for high performance, but following best practices ensures optimal runtime characteristics.
+
+## General Principles
+
+- **Lazy evaluation**: Effects are lazy - they describe what to do, not when
+- **Fiber efficiency**: Lightweight fibers enable massive concurrency
+- **Resource pooling**: Reuse connections and expensive resources
+- **Batching**: Combine operations to reduce overhead
+- **Caching**: Memoize expensive computations
+
+## Concurrency Optimization
+
+### Control Concurrency Levels
+
+Limit concurrent operations to prevent resource exhaustion.
+
+<CodeGroup>
+```typescript Bad - Unbounded concurrency
+const results = yield* Effect.forEach(
+  Array.from({ length: 10000 }, (_, i) => i),
+  (id) => fetchUser(id),
+  { concurrency: "unbounded" }
+)
+```
+
+```typescript Good - Bounded concurrency
+const results = yield* Effect.forEach(
+  Array.from({ length: 10000 }, (_, i) => i),
+  (id) => fetchUser(id),
+  { concurrency: 10 } // Limit to 10 concurrent operations
+)
+```
+</CodeGroup>
+
+<Tip>
+For I/O operations, set concurrency to 2-4x your CPU cores. For CPU-bound tasks, match your core count.
+</Tip>
+
+### Batch Operations
+
+Reduce overhead by batching similar operations.
+
+```typescript
+import { Effect, Array as EffectArray } from "effect"
+
+// Bad: Individual queries
+const users = yield* Effect.forEach(
+  userIds,
+  (id) => db.query("SELECT * FROM users WHERE id = ?", [id])
+)
+
+// Good: Batch query
+const users = yield* db.query(
+  `SELECT * FROM users WHERE id IN (${userIds.map(() => "?").join(",")})`,
+  userIds
+)
+```
+
+### Use Effect.all for Parallel Operations
+
+<CodeGroup>
+```typescript Sequential - Slower
+const user = yield* fetchUser(id)
+const orders = yield* fetchOrders(id)
+const settings = yield* fetchSettings(id)
+```
+
+```typescript Parallel - Faster
+const [user, orders, settings] = yield* Effect.all([
+  fetchUser(id),
+  fetchOrders(id),
+  fetchSettings(id)
+], { concurrency: "unbounded" })
+```
+</CodeGroup>
+
+## Caching and Memoization
+
+### Cache Expensive Operations
+
+```typescript
+import { Effect, Cache, Duration } from "effect"
+
+const makeUserCache = Cache.make({
+  capacity: 1000,
+  timeToLive: Duration.minutes(5),
+  lookup: (id: string) => fetchUserFromDatabase(id)
+})
+
+const program = Effect.gen(function* () {
+  const cache = yield* makeUserCache
+
+  // First call fetches from database
+  const user1 = yield* Cache.get(cache, "123")
+
+  // Second call returns cached value
+  const user2 = yield* Cache.get(cache, "123")
+})
+```
+
+<Warning>
+Set appropriate cache expiration times. Stale data can cause bugs, while too-short TTLs reduce cache effectiveness.
+</Warning>
+
+### Memoize Pure Computations
+
+```typescript
+import { Effect } from "effect"
+
+const expensiveComputation = (n: number): Effect.Effect<number> =>
+  Effect.sync(() => {
+    let result = 0
+    for (let i = 0; i < n * 1000000; i++) {
+      result += Math.sqrt(i)
+    }
+    return result
+  })
+
+// Memoize the effect
+const memoized = Effect.cached(
+  expensiveComputation(100),
+  Duration.infinity
+)
+
+const program = Effect.gen(function* () {
+  // First call executes computation
+  const result1 = yield* memoized
+
+  // Subsequent calls return cached result
+  const result2 = yield* memoized
+  const result3 = yield* memoized
+})
+```
+
+## Resource Management
+
+### Pool Connections
+
+Reuse database connections and HTTP clients.
+
+```typescript
+import { Effect, Pool } from "effect"
+
+const makeConnectionPool = Pool.make({
+  acquire: Effect.acquireRelease(
+    Effect.tryPromise(() => createDatabaseConnection()),
+    (conn) => Effect.promise(() => conn.close())
+  ),
+  size: 10
+})
+
+const query = (sql: string) =>
+  Effect.gen(function* () {
+    const pool = yield* makeConnectionPool
+    return yield* Pool.get(pool).pipe(
+      Effect.flatMap(conn =>
+        Effect.tryPromise(() => conn.query(sql))
+      )
+    )
+  })
+```
+
+### Scope Resources Appropriately
+
+<CodeGroup>
+```typescript Bad - Creates new connection per request
+const handleRequest = (req: Request) =>
+  Effect.gen(function* () {
+    const db = yield* Database // New connection!
+    return yield* db.query("SELECT * FROM users")
+  }).pipe(
+    Effect.provide(DatabaseLive)
+  )
+```
+
+```typescript Good - Reuses connection
+const handleRequest = (req: Request) =>
+  Effect.gen(function* () {
+    const db = yield* Database // Reuses existing connection
+    return yield* db.query("SELECT * FROM users")
+  })
+
+const server = Effect.gen(function* () {
+  const db = yield* Database // Created once
+  yield* startServer(handleRequest)
+}).pipe(
+  Effect.provide(DatabaseLive) // Single connection pool
+)
+```
+</CodeGroup>
+
+## Stream Optimization
+
+### Use Chunking for Large Datasets
+
+```typescript
+import { Stream, Chunk } from "effect"
+
+// Bad: Process one item at a time
+const processed = stream.pipe(
+  Stream.map(processItem)
+)
+
+// Good: Process in chunks
+const processed = stream.pipe(
+  Stream.rechunk(1000),
+  Stream.mapChunks(chunk =>
+    Chunk.map(chunk, processItem)
+  )
+)
+```
+
+### Buffer for Bursty Streams
+
+```typescript
+const buffered = stream.pipe(
+  Stream.buffer({ capacity: 1000, strategy: "dropping" })
+)
+```
+
+<Tip>
+Use `"dropping"` strategy for real-time data where old data can be discarded. Use `"sliding"` to keep the latest values.
+</Tip>
+
+## Avoid Common Performance Pitfalls
+
+### Don't Create Effects in Loops
+
+<CodeGroup>
+```typescript Bad - Creates new effect each iteration
+for (let i = 0; i < 1000; i++) {
+  yield* Effect.sync(() => processItem(items[i]))
+}
+```
+
+```typescript Good - Use Effect.forEach
+yield* Effect.forEach(
+  items,
+  (item) => Effect.sync(() => processItem(item)),
+  { concurrency: 10 }
+)
+```
+</CodeGroup>
+
+### Avoid Excessive Flatmapping
+
+<CodeGroup>
+```typescript Bad - Deeply nested flatMaps
+const result = yield* effect1.pipe(
+  Effect.flatMap(a => effect2(a)),
+  Effect.flatMap(b => effect3(b)),
+  Effect.flatMap(c => effect4(c)),
+  Effect.flatMap(d => effect5(d))
+)
+```
+
+```typescript Good - Use Effect.gen
+const result = yield* Effect.gen(function* () {
+  const a = yield* effect1
+  const b = yield* effect2(a)
+  const c = yield* effect3(b)
+  const d = yield* effect4(c)
+  return yield* effect5(d)
+})
+```
+</CodeGroup>
+
+### Minimize Effect.sync Overhead
+
+<CodeGroup>
+```typescript Bad - Wraps simple operation
+const double = (n: number) => Effect.sync(() => n * 2)
+
+const result = yield* Effect.forEach(
+  numbers,
+  double
+)
+```
+
+```typescript Good - Use Effect.map for pure functions
+const doubled = Effect.map(numbers, n => n * 2)
+```
+</CodeGroup>
+
+## Benchmarking
+
+Measure performance to identify bottlenecks.
+
+```typescript
+import { Effect, Duration, Console } from "effect"
+
+const benchmark = <A, E>(label: string, effect: Effect.Effect<A, E>) =>
+  Effect.gen(function* () {
+    const start = Date.now()
+    const result = yield* effect
+    const duration = Date.now() - start
+    yield* Console.log(`${label}: ${duration}ms`)
+    return result
+  })
+
+const program = Effect.gen(function* () {
+  yield* benchmark("Fetch users", fetchUsers())
+  yield* benchmark("Process orders", processOrders())
+})
+```
+
+### Use Effect.withSpan for Tracing
+
+```typescript
+import { Effect } from "effect"
+
+const tracedEffect = Effect.withSpan(
+  fetchUsers(),
+  "fetchUsers",
+  { attributes: { userId: "123" } }
+)
+```
+
+## Memory Optimization
+
+### Avoid Memory Leaks in Long-Running Streams
+
+```typescript
+// Bad: Accumulates all values in memory
+const sum = yield* stream.pipe(
+  Stream.runFold(0, (acc, n) => acc + n)
+)
+
+// Good: Process in chunks
+const sum = yield* stream.pipe(
+  Stream.rechunk(10000),
+  Stream.mapChunks(chunk =>
+    Chunk.of(Chunk.reduce(chunk, 0, (a, b) => a + b))
+  ),
+  Stream.runFold(0, (acc, n) => acc + n)
+)
+```
+
+### Release Resources Promptly
+
+```typescript
+// Good: Resource is released immediately after use
+const data = yield* Effect.scoped(
+  Effect.gen(function* () {
+    const resource = yield* acquireResource()
+    return yield* useResource(resource)
+  })
+)
+// resource is now released
+```
+
+## Compilation Optimization
+
+### Use Type Annotations
+
+Help TypeScript by providing explicit types.
+
+```typescript
+// Good: Explicit return type helps TypeScript
+const fetchUser = (id: string): Effect.Effect<User, UserNotFound> =>
+  Effect.gen(function* () {
+    // ...
+  })
+```
+
+### Avoid Deep Type Inference
+
+<CodeGroup>
+```typescript Bad - Complex nested inference
+const complex = yield* pipe(
+  effect1,
+  Effect.flatMap(a => pipe(
+    effect2(a),
+    Effect.flatMap(b => pipe(
+      effect3(b),
+      Effect.map(c => ({ a, b, c }))
+    ))
+  ))
+)
+```
+
+```typescript Good - Simpler with Effect.gen
+const complex = yield* Effect.gen(function* () {
+  const a = yield* effect1
+  const b = yield* effect2(a)
+  const c = yield* effect3(b)
+  return { a, b, c }
+})
+```
+</CodeGroup>
+
+## Runtime Optimization
+
+### Create Reusable Runtimes
+
+```typescript
+import { Runtime, Effect } from "effect"
+
+// Create runtime once
+const runtime = Runtime.make(AppLive)
+
+// Reuse for multiple executions
+Runtime.runPromise(runtime)(effect1)
+Runtime.runPromise(runtime)(effect2)
+Runtime.runPromise(runtime)(effect3)
+```
+
+### Use runFork for Fire-and-Forget
+
+```typescript
+// Don't block on non-critical operations
+const fiber = yield* Effect.fork(logAnalytics(event))
+
+// Continue with main logic
+const result = yield* processRequest()
+
+// Optionally join later if needed
+// yield* Fiber.join(fiber)
+```
+
+## Performance Testing
+
+Write performance tests to catch regressions.
+
+```typescript
+import { it } from "@effect/vitest"
+import { Effect, TestClock, Duration } from "effect"
+
+it.effect("should complete within 100ms", () =>
+  Effect.gen(function* () {
+    const start = Date.now()
+
+    yield* heavyOperation()
+
+    const duration = Date.now() - start
+    assert.true(duration < 100, `Took ${duration}ms, expected <100ms`)
+  })
+)
+
+it.effect("should handle 1000 concurrent requests", () =>
+  Effect.gen(function* () {
+    const requests = Array.from({ length: 1000 }, (_, i) => i)
+
+    const start = Date.now()
+
+    yield* Effect.forEach(
+      requests,
+      (id) => handleRequest(id),
+      { concurrency: 100 }
+    )
+
+    const duration = Date.now() - start
+    yield* Effect.log(`Processed 1000 requests in ${duration}ms`)
+  }).pipe(
+    Effect.provide(TestLayer)
+  )
+)
+```
+
+## Production Monitoring
+
+Monitor performance in production.
+
+```typescript
+import { Effect, Metric } from "effect"
+
+const requestDuration = Metric.timer("http_request_duration")
+
+const handleRequest = (req: Request) =>
+  Effect.gen(function* () {
+    const start = Date.now()
+
+    const result = yield* processRequest(req)
+
+    const duration = Date.now() - start
+    yield* Metric.update(requestDuration, duration)
+
+    return result
+  })
+```
+
+## Best Practices Summary
+
+1. **Limit concurrency** to prevent resource exhaustion
+2. **Cache aggressively** for expensive operations
+3. **Pool connections** for databases and HTTP clients
+4. **Batch operations** to reduce overhead
+5. **Use chunks** for large data processing
+6. **Avoid premature optimization** - measure first
+7. **Monitor in production** to catch real-world issues
+8. **Test performance** to prevent regressions
+
+<Warning>
+Always profile before optimizing. Premature optimization can make code harder to maintain without significant benefits.
+</Warning>
+
+## Next Steps
+
+- Learn about [Type Safety](/guides/best-practices/type-safety)
+- Explore [Testing Strategies](/guides/best-practices/testing-strategies)
+- Review [Project Structure](/guides/best-practices/project-structure)

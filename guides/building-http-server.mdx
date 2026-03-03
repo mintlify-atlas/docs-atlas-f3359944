@@ -1,0 +1,263 @@
+---
+title: "Building an HTTP Server"
+description: "Complete tutorial for building HTTP servers with @effect/platform"
+icon: "server"
+---
+
+Build production-ready HTTP servers using `@effect/platform` with routing, middleware, WebSockets, and more.
+
+## Prerequisites
+
+Install the required packages:
+
+```bash
+npm install effect @effect/platform @effect/platform-node
+```
+
+## Step 1: Basic HTTP Server
+
+Create a simple HTTP server that responds with "Hello World":
+
+```typescript server.ts
+import { HttpServer, HttpServerResponse } from "@effect/platform"
+import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
+import { Layer } from "effect"
+import { createServer } from "node:http"
+
+const ServerLive = NodeHttpServer.layer(() => createServer(), { port: 3000 })
+
+const HttpLive = HttpServer.serve(HttpServerResponse.text("Hello World"))
+  .pipe(Layer.provide(ServerLive))
+
+NodeRuntime.runMain(Layer.launch(HttpLive))
+```
+
+Run the server:
+
+```bash
+tsx server.ts
+```
+
+Visit `http://localhost:3000` to see "Hello World".
+
+## Step 2: Add Routing
+
+Create routes using `HttpRouter`:
+
+```typescript router.ts
+import {
+  HttpMiddleware,
+  HttpRouter,
+  HttpServer,
+  HttpServerRequest,
+  HttpServerResponse
+} from "@effect/platform"
+import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
+import { Effect, Layer } from "effect"
+import { createServer } from "node:http"
+
+const ServerLive = NodeHttpServer.layer(() => createServer(), { port: 3000 })
+
+const HttpLive = HttpRouter.empty.pipe(
+  HttpRouter.get(
+    "/",
+    Effect.map(
+      HttpServerRequest.HttpServerRequest,
+      (req) => HttpServerResponse.text(req.url)
+    )
+  ),
+  HttpRouter.get(
+    "/healthz",
+    HttpServerResponse.text("ok").pipe(
+      HttpMiddleware.withLoggerDisabled
+    )
+  ),
+  HttpRouter.post(
+    "/api/users",
+    Effect.gen(function*() {
+      const req = yield* HttpServerRequest.HttpServerRequest
+      const body = yield* req.json
+      return HttpServerResponse.json({ created: true, data: body })
+    })
+  ),
+  HttpServer.serve(HttpMiddleware.logger),
+  HttpServer.withLogAddress,
+  Layer.provide(ServerLive)
+)
+
+NodeRuntime.runMain(Layer.launch(HttpLive))
+```
+
+## Step 3: Handle File Uploads
+
+Process multipart form data with file uploads:
+
+```typescript upload.ts
+import {
+  HttpRouter,
+  HttpServer,
+  HttpServerRequest,
+  HttpServerResponse,
+  Multipart
+} from "@effect/platform"
+import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
+import { Effect, Layer } from "effect"
+import * as Schema from "effect/Schema"
+import { createServer } from "node:http"
+
+const ServerLive = NodeHttpServer.layer(() => createServer(), { port: 3000 })
+
+const HttpLive = HttpRouter.empty.pipe(
+  HttpRouter.post(
+    "/upload",
+    Effect.gen(function*() {
+      const data = yield* HttpServerRequest.schemaBodyForm(Schema.Struct({
+        files: Multipart.FilesSchema
+      }))
+      console.log("Received files:", data.files)
+      return HttpServerResponse.json({ 
+        success: true, 
+        count: data.files.length 
+      })
+    })
+  ),
+  HttpServer.serve(),
+  Layer.provide(ServerLive)
+)
+
+NodeRuntime.runMain(Layer.launch(HttpLive))
+```
+
+## Step 4: WebSocket Support
+
+Add real-time WebSocket communication:
+
+```typescript websocket.ts
+import {
+  HttpRouter,
+  HttpServer,
+  HttpServerRequest,
+  HttpServerResponse
+} from "@effect/platform"
+import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
+import { Effect, Layer, Schedule, Stream } from "effect"
+import { createServer } from "node:http"
+
+const ServerLive = NodeHttpServer.layer(() => createServer(), { port: 3000 })
+
+const HttpLive = HttpRouter.empty.pipe(
+  HttpRouter.get(
+    "/ws",
+    Stream.fromSchedule(Schedule.spaced(1000)).pipe(
+      Stream.map(JSON.stringify),
+      Stream.encodeText,
+      Stream.pipeThroughChannel(HttpServerRequest.upgradeChannel()),
+      Stream.decodeText(),
+      Stream.runForEach((_) => Effect.log(_)),
+      Effect.annotateLogs("ws", "recv"),
+      Effect.as(HttpServerResponse.empty())
+    )
+  ),
+  HttpServer.serve(),
+  Layer.provide(ServerLive)
+)
+
+NodeRuntime.runMain(Layer.launch(HttpLive))
+```
+
+## Step 5: Add Error Handling
+
+Handle errors gracefully with custom error responses:
+
+```typescript errors.ts
+import {
+  HttpRouter,
+  HttpServer,
+  HttpServerResponse
+} from "@effect/platform"
+import { NodeHttpServer, NodeRuntime } from "@effect/platform-node"
+import { Effect, Layer } from "effect"
+import { createServer } from "node:http"
+
+class UserNotFoundError {
+  readonly _tag = "UserNotFoundError"
+  constructor(readonly userId: string) {}
+}
+
+const ServerLive = NodeHttpServer.layer(() => createServer(), { port: 3000 })
+
+const HttpLive = HttpRouter.empty.pipe(
+  HttpRouter.get(
+    "/users/:id",
+    Effect.gen(function*() {
+      const userId = "123" // From route params
+      
+      // Simulate user lookup that might fail
+      if (userId !== "123") {
+        return yield* Effect.fail(new UserNotFoundError(userId))
+      }
+      
+      return HttpServerResponse.json({ id: userId, name: "Alice" })
+    }).pipe(
+      Effect.catchTag("UserNotFoundError", (error) =>
+        Effect.succeed(
+          HttpServerResponse.json(
+            { error: "User not found", userId: error.userId },
+            { status: 404 }
+          )
+        )
+      )
+    )
+  ),
+  HttpServer.serve(),
+  Layer.provide(ServerLive)
+)
+
+NodeRuntime.runMain(Layer.launch(HttpLive))
+```
+
+## Running in Production
+
+For production deployments:
+
+1. Use environment variables for configuration
+2. Enable HTTPS with proper certificates
+3. Add request logging and monitoring
+4. Implement rate limiting
+5. Set appropriate timeout values
+
+```typescript production.ts
+import { HttpServer } from "@effect/platform"
+import { NodeHttpServer } from "@effect/platform-node"
+import { Config, Layer } from "effect"
+import { createServer } from "node:http"
+
+const ServerLive = Layer.unwrapEffect(
+  Effect.gen(function*() {
+    const port = yield* Config.number("PORT").pipe(
+      Config.withDefault(3000)
+    )
+    return NodeHttpServer.layer(() => createServer(), { port })
+  })
+)
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Database Integration" icon="database" href="/guides/database-integration">
+    Connect your HTTP server to a database
+  </Card>
+  
+  <Card title="Error Handling Patterns" icon="shield-halved" href="/guides/error-handling-patterns">
+    Learn advanced error handling techniques
+  </Card>
+  
+  <Card title="Streaming Data" icon="water" href="/guides/streaming-data">
+    Process real-time data streams
+  </Card>
+  
+  <Card title="HTTP API Reference" icon="book" href="/api-reference/platform/http">
+    Full HTTP API documentation
+  </Card>
+</CardGroup>

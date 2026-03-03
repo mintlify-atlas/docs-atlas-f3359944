@@ -1,0 +1,286 @@
+---
+title: "@effect/opentelemetry"
+description: "OpenTelemetry integration for Effect applications"
+---
+
+`@effect/opentelemetry` provides seamless integration between Effect and OpenTelemetry, enabling observability through tracing, metrics, and logging for your Effect applications.
+
+## Installation
+
+<CodeGroup>
+```bash npm
+npm install @effect/opentelemetry @opentelemetry/api @opentelemetry/sdk-trace-node
+```
+
+```bash pnpm
+pnpm add @effect/opentelemetry @opentelemetry/api @opentelemetry/sdk-trace-node
+```
+
+```bash yarn
+yarn add @effect/opentelemetry @opentelemetry/api @opentelemetry/sdk-trace-node
+```
+</CodeGroup>
+
+## Required Peer Dependencies
+
+The package requires several OpenTelemetry packages as peer dependencies:
+
+- `@opentelemetry/api` (^1.9)
+- `@opentelemetry/resources` (^2.0.0)
+- `@opentelemetry/sdk-trace-base` (^2.0.0)
+- `@opentelemetry/sdk-trace-node` (^2.0.0) - for Node.js
+- `@opentelemetry/sdk-trace-web` (^2.0.0) - for browsers
+- `@opentelemetry/sdk-metrics` (^2.0.0)
+- `@opentelemetry/sdk-logs` (&gt;=0.203.0 &lt;0.300.0)
+- `@opentelemetry/semantic-conventions` (^1.33.0)
+
+## Quick Start
+
+Set up basic tracing for your Effect application:
+
+```ts
+import { NodeSdk } from "@effect/opentelemetry"
+import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http"
+import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base"
+import { Effect, Layer } from "effect"
+
+const OpenTelemetryLive = NodeSdk.layer(() => ({
+  resource: {
+    serviceName: "my-service"
+  },
+  spanProcessor: new BatchSpanProcessor(
+    new OTLPTraceExporter({
+      url: "http://localhost:4318/v1/traces"
+    })
+  )
+}))
+
+const program = Effect.gen(function* () {
+  yield* Effect.log("Application started")
+  // Your application logic
+}).pipe(
+  Effect.withSpan("main")
+)
+
+Effect.runPromise(
+  program.pipe(Effect.provide(OpenTelemetryLive))
+)
+```
+
+## Tracing
+
+### Automatic Span Creation
+
+Effect operations automatically create spans:
+
+```ts
+import { Effect } from "effect"
+
+const fetchUser = (id: string) =>
+  Effect.gen(function* () {
+    // This will create a span automatically
+    const response = yield* Effect.tryPromise(() =>
+      fetch(`https://api.example.com/users/${id}`)
+    )
+    return yield* Effect.promise(() => response.json())
+  }).pipe(
+    Effect.withSpan("fetchUser", { attributes: { userId: id } })
+  )
+```
+
+### Manual Span Management
+
+```ts
+import { Effect, Tracer } from "effect"
+
+const program = Effect.gen(function* () {
+  const tracer = yield* Tracer.Tracer
+  
+  yield* tracer.span("database-query")(
+    Effect.gen(function* () {
+      // Your database operation
+      yield* Effect.sleep("100 millis")
+    })
+  )
+})
+```
+
+## Metrics
+
+Collect and export metrics:
+
+```ts
+import { NodeSdk } from "@effect/opentelemetry"
+import { PrometheusExporter } from "@opentelemetry/exporter-prometheus"
+import { MeterProvider, PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics"
+import { Effect } from "effect"
+
+const metricsExporter = new PrometheusExporter(
+  { port: 9464 },
+  () => console.log("Prometheus scrape endpoint: http://localhost:9464/metrics")
+)
+
+const OpenTelemetryLive = NodeSdk.layer(() => ({
+  resource: {
+    serviceName: "my-service"
+  },
+  meterProvider: new MeterProvider({
+    readers: [
+      new PeriodicExportingMetricReader({
+        exporter: metricsExporter,
+        exportIntervalMillis: 1000
+      })
+    ]
+  })
+}))
+```
+
+### Custom Metrics
+
+```ts
+import { Effect, Metric } from "effect"
+
+const requestCounter = Metric.counter("http_requests_total", {
+  description: "Total HTTP requests"
+})
+
+const requestDuration = Metric.histogram("http_request_duration", {
+  description: "HTTP request duration in milliseconds"
+})
+
+const handleRequest = Effect.gen(function* () {
+  yield* requestCounter.increment()
+  
+  const start = Date.now()
+  // Handle request...
+  const duration = Date.now() - start
+  
+  yield* requestDuration.update(duration)
+})
+```
+
+## Logging
+
+Integrate Effect logging with OpenTelemetry:
+
+```ts
+import { NodeSdk } from "@effect/opentelemetry"
+import { OTLPLogExporter } from "@opentelemetry/exporter-logs-otlp-http"
+import { BatchLogRecordProcessor } from "@opentelemetry/sdk-logs"
+import { Effect } from "effect"
+
+const OpenTelemetryLive = NodeSdk.layer(() => ({
+  resource: {
+    serviceName: "my-service"
+  },
+  logRecordProcessor: new BatchLogRecordProcessor(
+    new OTLPLogExporter({
+      url: "http://localhost:4318/v1/logs"
+    })
+  )
+}))
+
+const program = Effect.gen(function* () {
+  yield* Effect.log("Info message")
+  yield* Effect.logError("Error message")
+  yield* Effect.logWarning("Warning message")
+})
+```
+
+## Exporters
+
+### OTLP Exporter
+
+Export to OpenTelemetry Collector:
+
+```bash
+npm install @opentelemetry/exporter-trace-otlp-http
+```
+
+```ts
+import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http"
+
+const exporter = new OTLPTraceExporter({
+  url: "http://localhost:4318/v1/traces"
+})
+```
+
+### Prometheus Exporter
+
+Expose metrics for Prometheus:
+
+```bash
+npm install @opentelemetry/exporter-prometheus
+```
+
+```ts
+import { PrometheusExporter } from "@opentelemetry/exporter-prometheus"
+
+const exporter = new PrometheusExporter(
+  { port: 9464 }
+)
+```
+
+## Semantic Conventions
+
+Use standard attribute names:
+
+```ts
+import { ATTR_SERVICE_NAME, ATTR_HTTP_REQUEST_METHOD } from "@opentelemetry/semantic-conventions"
+import { Effect } from "effect"
+
+const program = Effect.gen(function* () {
+  // Use semantic conventions
+}).pipe(
+  Effect.withSpan("http-request", {
+    attributes: {
+      [ATTR_HTTP_REQUEST_METHOD]: "GET",
+      [ATTR_SERVICE_NAME]: "api-gateway"
+    }
+  })
+)
+```
+
+## Context Propagation
+
+Automatic context propagation across async boundaries:
+
+```ts
+import { Effect } from "effect"
+
+const parent = Effect.gen(function* () {
+  yield* Effect.log("Parent span")
+  
+  // Child operation automatically inherits trace context
+  yield* child
+}).pipe(Effect.withSpan("parent"))
+
+const child = Effect.gen(function* () {
+  yield* Effect.log("Child span")
+}).pipe(Effect.withSpan("child"))
+```
+
+## Best Practices
+
+1. **Service Name**: Always set a descriptive service name
+2. **Sampling**: Configure sampling for production to reduce overhead
+3. **Batch Processing**: Use batch processors for better performance
+4. **Attribute Limits**: Be mindful of attribute cardinality
+5. **Resource Cleanup**: Ensure proper shutdown of exporters
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="API Reference" href="https://effect-ts.github.io/effect/docs/opentelemetry">
+    Complete API documentation
+  </Card>
+  <Card title="OpenTelemetry Docs" href="https://opentelemetry.io/docs/">
+    Official OpenTelemetry documentation
+  </Card>
+  <Card title="@effect/platform" href="/ecosystem/platform">
+    Platform abstractions with built-in tracing
+  </Card>
+  <Card title="Effect Observability" href="/guides/observability">
+    Observability guide for Effect
+  </Card>
+</CardGroup>

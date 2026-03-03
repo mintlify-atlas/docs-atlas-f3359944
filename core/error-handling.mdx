@@ -1,0 +1,458 @@
+---
+title: Error Handling
+description: Handle errors with catchAll, catchTag, and the Either pattern
+---
+
+Effect provides a comprehensive error handling system that distinguishes between expected errors (failures) and unexpected errors (defects).
+
+## The Error Channel
+
+Effects have a dedicated error channel (the `E` type parameter) for expected, recoverable errors:
+
+```typescript
+import { Effect } from "effect"
+
+class ValidationError {
+  readonly _tag = "ValidationError"
+  constructor(readonly message: string) {}
+}
+
+// Effect<never, ValidationError, never>
+const program = Effect.fail(new ValidationError("Invalid input"))
+```
+
+The type system tracks which errors can occur, enabling type-safe error handling.
+
+## catchAll - Handle All Errors
+
+```typescript
+export const catchAll: {
+  <E, A2, E2, R2>(f: (e: E) => Effect<A2, E2, R2>): <A, R>(self: Effect<A, E, R>) => Effect<A2 | A, E2, R2 | R>
+  <A, E, R, A2, E2, R2>(self: Effect<A, E, R>, f: (e: E) => Effect<A2, E2, R2>): Effect<A2 | A, E2, R2 | R>
+}
+```
+
+Recover from any error in the error channel:
+
+```typescript
+import { Effect } from "effect"
+
+class HttpError {
+  readonly _tag = "HttpError"
+  constructor(readonly status: number) {}
+}
+
+const fetchData = Effect.fail(new HttpError(500))
+
+const program = fetchData.pipe(
+  Effect.catchAll((error) => {
+    console.log(`Error ${error.status}, using fallback`)
+    return Effect.succeed("fallback data")
+  })
+)
+// Effect<string, never, never>
+
+Effect.runPromise(program)  // "fallback data"
+```
+
+<Steps>
+
+### Error Recovery
+
+`catchAll` allows you to inspect the error and return a recovery effect:
+
+```typescript
+import { Effect } from "effect"
+
+class NetworkError {
+  readonly _tag = "NetworkError"
+  constructor(readonly message: string) {}
+}
+
+const program = Effect.gen(function* () {
+  const data = yield* fetchFromApi().pipe(
+    Effect.catchAll((error) => {
+      // Log error and return cached data
+      yield* Effect.log(`Network error: ${error.message}`)
+      return getCachedData()
+    })
+  )
+  return data
+})
+```
+
+### Error Transformation
+
+You can also fail with a different error:
+
+```typescript
+import { Effect } from "effect"
+
+class DatabaseError {
+  readonly _tag = "DatabaseError"
+}
+
+class ApplicationError {
+  readonly _tag = "ApplicationError"
+  constructor(readonly cause: string) {}
+}
+
+const program = queryDatabase().pipe(
+  Effect.catchAll((dbError) =>
+    Effect.fail(new ApplicationError("Database operation failed"))
+  )
+)
+// Transforms DatabaseError into ApplicationError
+```
+
+</Steps>
+
+## catchTag - Handle Tagged Errors
+
+```typescript
+export const catchTag: {
+  <E, const K extends E extends { _tag: string } ? E["_tag"] : never, A1, E1, R1>(
+    ...args: [...tags: K, f: (e: Extract<E, { _tag: K }>) => Effect<A1, E1, R1>]
+  ): <A, R>(self: Effect<A, E, R>) => Effect<A | A1, Exclude<E, { _tag: K }> | E1, R | R1>
+}
+```
+
+Handle specific error types by their `_tag` field:
+
+```typescript
+import { Effect } from "effect"
+
+class HttpError {
+  readonly _tag = "HttpError"
+  constructor(readonly status: number) {}
+}
+
+class ValidationError {
+  readonly _tag = "ValidationError"
+  constructor(readonly field: string) {}
+}
+
+class NetworkError {
+  readonly _tag = "NetworkError"
+}
+
+const program: Effect.Effect<User, HttpError | ValidationError | NetworkError> = ...
+
+const recovered = program.pipe(
+  Effect.catchTag("HttpError", (error) =>
+    error.status === 404
+      ? Effect.succeed(defaultUser)
+      : Effect.fail(error)  // Re-fail on other HTTP errors
+  ),
+  Effect.catchTag("ValidationError", (error) => {
+    console.log(`Invalid field: ${error.field}`)
+    return Effect.fail(error)  // Don't recover, just log
+  })
+)
+// Effect<User, HttpError | ValidationError | NetworkError>
+```
+
+<Note>
+The `_tag` field is a discriminated union pattern that enables TypeScript to narrow error types.
+</Note>
+
+## catchTags - Handle Multiple Error Types
+
+```typescript
+import { Effect } from "effect"
+
+class HttpError {
+  readonly _tag = "HttpError"
+  constructor(readonly status: number) {}
+}
+
+class ValidationError {
+  readonly _tag = "ValidationError"
+  constructor(readonly field: string) {}
+}
+
+const program: Effect.Effect<string, HttpError | ValidationError> = ...
+
+const recovered = program.pipe(
+  Effect.catchTags({
+    HttpError: (error) =>
+      Effect.succeed(`HTTP Error ${error.status}`),
+    ValidationError: (error) =>
+      Effect.succeed(`Invalid field: ${error.field}`)
+  })
+)
+// Effect<string, never, never> - all errors handled
+```
+
+## Either Pattern
+
+Convert the error channel into a value using `Either`:
+
+```typescript
+import { Effect, Either } from "effect"
+
+class ApiError {
+  readonly _tag = "ApiError"
+}
+
+const program: Effect.Effect<Data, ApiError> = ...
+
+// Convert to Either
+const withEither = Effect.either(program)
+// Effect<Either<Data, ApiError>, never, never>
+
+const result = Effect.runSync(withEither)
+
+if (Either.isLeft(result)) {
+  console.log("Error:", result.left)
+} else {
+  console.log("Success:", result.right)
+}
+```
+
+<Steps>
+
+### Benefits of Either
+
+**Type Safety**: The error is now a value, not in the error channel:
+
+```typescript
+const withEither: Effect.Effect<Either<Data, ApiError>, never>
+//                                                      ^^^^^ no errors
+```
+
+**Pattern Matching**:
+
+```typescript
+import { Effect, Either, Match } from "effect"
+
+const program = Effect.either(fetchData()).pipe(
+  Effect.map(
+    Match.value,
+    Match.tag("Left", ({ left }) => `Error: ${left}`),
+    Match.tag("Right", ({ right }) => `Success: ${right}`),
+    Match.exhaustive
+  )
+)
+```
+
+**Working with Multiple Effects**:
+
+```typescript
+import { Effect, Either } from "effect"
+
+const program = Effect.gen(function* () {
+  const result1 = yield* Effect.either(operation1())
+  const result2 = yield* Effect.either(operation2())
+
+  // Both results are Either values, neither short-circuits
+  if (Either.isLeft(result1) || Either.isLeft(result2)) {
+    return handlePartialFailure(result1, result2)
+  }
+
+  return combineResults(result1.right, result2.right)
+})
+```
+
+</Steps>
+
+## Option Pattern
+
+Convert failures to None:
+
+```typescript
+import { Effect, Option } from "effect"
+
+const program: Effect.Effect<User, Error> = ...
+
+const asOption = Effect.option(program)
+// Effect<Option<User>, never, never>
+
+const result = yield* asOption
+
+if (Option.isNone(result)) {
+  console.log("Failed to fetch user")
+} else {
+  console.log("User:", result.value)
+}
+```
+
+## Defects vs Failures
+
+Effect distinguishes between two types of errors:
+
+<Steps>
+
+### Failures (Expected Errors)
+
+Tracked in the error channel, recoverable:
+
+```typescript
+import { Effect } from "effect"
+
+class NotFoundError {
+  readonly _tag = "NotFoundError"
+}
+
+const program = Effect.fail(new NotFoundError())
+// Effect<never, NotFoundError, never>
+```
+
+### Defects (Unexpected Errors)
+
+Not tracked in types, represent bugs:
+
+```typescript
+import { Effect } from "effect"
+
+const program = Effect.die("Assertion failed: x must be positive")
+// Effect<never, never, never>
+//              ^^^^^ defects don't appear in error channel
+```
+
+Defects should represent unrecoverable programming errors.
+
+### Catching Defects
+
+Use `catchAllCause` to handle both failures and defects:
+
+```typescript
+import { Effect, Cause } from "effect"
+
+const program = Effect.die("Something went wrong")
+
+const recovered = program.pipe(
+  Effect.catchAllCause((cause) =>
+    Cause.isDie(cause)
+      ? Effect.succeed("Recovered from defect")
+      : Effect.succeed("Recovered from failure")
+  )
+)
+```
+
+<Warning>
+Only catch defects at application boundaries. Most code should not recover from defects, as they represent bugs.
+</Warning>
+
+</Steps>
+
+## Error Handling Patterns
+
+### Retry with Fallback
+
+```typescript
+import { Effect, Schedule } from "effect"
+
+const program = fetchFromApi().pipe(
+  Effect.retry(Schedule.exponential("100 millis").pipe(
+    Schedule.compose(Schedule.recurs(3))
+  )),
+  Effect.catchAll(() => getCachedData())
+)
+```
+
+### Timeout with Default
+
+```typescript
+import { Effect } from "effect"
+
+const program = longOperation().pipe(
+  Effect.timeout("5 seconds"),
+  Effect.catchAll(() => Effect.succeed(defaultValue))
+)
+```
+
+### Combine Results from Fallible Operations
+
+```typescript
+import { Effect, Either } from "effect"
+
+const program = Effect.gen(function* () {
+  const results = yield* Effect.all([
+    Effect.either(fetchFromPrimary()),
+    Effect.either(fetchFromSecondary()),
+    Effect.either(fetchFromTertiary())
+  ])
+
+  const successful = results.filter(Either.isRight)
+  return successful.length > 0
+    ? successful[0].right
+    : Effect.fail(new Error("All sources failed"))
+})
+```
+
+## Best Practices
+
+<Steps>
+
+### Use Tagged Errors
+
+Always add a `_tag` field to error classes:
+
+```typescript
+// ✅ Good
+class NetworkError {
+  readonly _tag = "NetworkError"
+  constructor(readonly cause: unknown) {}
+}
+
+// ❌ Bad
+class NetworkError {
+  constructor(readonly cause: unknown) {}
+}
+```
+
+### Keep Error Types Narrow
+
+Use union types to represent all possible errors:
+
+```typescript
+import { Effect } from "effect"
+
+type AppError = ValidationError | NetworkError | DatabaseError
+
+const program: Effect.Effect<Result, AppError> = ...
+```
+
+### Don't Catch What You Can't Handle
+
+Only catch errors you can meaningfully recover from:
+
+```typescript
+import { Effect } from "effect"
+
+// ❌ Bad: Catching errors just to log them
+const bad = program.pipe(
+  Effect.catchAll((error) => {
+    console.log(error)
+    return Effect.fail(error)  // Just re-throwing
+  })
+)
+
+// ✅ Good: Use tap for logging without catching
+const good = program.pipe(
+  Effect.tapError((error) => Effect.log(error))
+)
+```
+
+### Fail Fast, Recover at Boundaries
+
+Let errors propagate and handle them at appropriate boundaries:
+
+```typescript
+import { Effect } from "effect"
+
+const processUser = (id: number) =>
+  Effect.gen(function* () {
+    const user = yield* fetchUser(id)  // Let errors propagate
+    const data = yield* fetchData(user.id)  // Let errors propagate
+    return processData(data)  // Let errors propagate
+  })
+
+// Handle errors at the application boundary
+const main = processUser(123).pipe(
+  Effect.catchAll(handleApplicationError)
+)
+```
+
+</Steps>

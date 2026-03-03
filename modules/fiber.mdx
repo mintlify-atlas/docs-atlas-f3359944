@@ -1,0 +1,297 @@
+---
+title: Fiber
+description: Lightweight concurrent execution units with await and interrupt
+---
+
+A `Fiber` is a lightweight thread of execution that never consumes more than a whole thread. Fibers are spawned by forking effects and run concurrently with the parent effect.
+
+## Type Signature
+
+```typescript
+interface Fiber<out A, out E = never> extends Effect<A, E> {
+  id(): FiberId
+  readonly await: Effect<Exit<A, E>>
+  readonly poll: Effect<Option<Exit<A, E>>>
+  interruptAsFork(fiberId: FiberId): Effect<void>
+}
+
+interface RuntimeFiber<out A, out E = never> extends Fiber<A, E> {
+  readonly status: Effect<FiberStatus>
+  readonly runtimeFlags: Effect<RuntimeFlags>
+}
+```
+
+## Creating Fibers
+
+### fork
+
+Forks an effect into a new fiber.
+
+```typescript
+import { Effect } from "effect"
+
+const program = Effect.gen(function* () {
+  const fiber = yield* Effect.fork(Effect.succeed(42))
+  const result = yield* Fiber.await(fiber)
+  console.log(result)
+})
+```
+
+### forkDaemon
+
+Forks a daemon fiber that's not supervised by the current scope.
+
+```typescript
+import { Effect } from "effect"
+
+const daemon = Effect.forkDaemon(
+  Effect.forever(Effect.sleep("1 second"))
+)
+```
+
+### forkScoped
+
+Forks a fiber within a scope, ensuring cleanup.
+
+```typescript
+import { Effect } from "effect"
+
+const program = Effect.scoped(
+  Effect.gen(function* () {
+    const fiber = yield* Effect.forkScoped(Effect.succeed(42))
+    return yield* Fiber.await(fiber)
+  })
+)
+```
+
+## Fiber Operations
+
+### await
+
+Waits for a fiber to complete and returns its result.
+
+```typescript
+import { Effect, Fiber } from "effect"
+
+const program = Effect.gen(function* () {
+  const fiber = yield* Effect.fork(Effect.succeed(42))
+  const exit = yield* Fiber.await(fiber)
+  
+  console.log(exit)
+  // { _tag: 'Success', value: 42 }
+})
+```
+
+### join
+
+Waits for a fiber and extracts the success value or fails with the error.
+
+```typescript
+import { Effect, Fiber } from "effect"
+
+const program = Effect.gen(function* () {
+  const fiber = yield* Effect.fork(Effect.succeed(42))
+  const result = yield* Fiber.join(fiber)
+  
+  console.log(result)  // 42
+})
+```
+
+### poll
+
+Checks if a fiber has completed without blocking.
+
+```typescript
+import { Effect, Fiber, Option } from "effect"
+
+const program = Effect.gen(function* () {
+  const fiber = yield* Effect.fork(
+    Effect.sleep("1 second").pipe(Effect.as(42))
+  )
+  
+  const result = yield* Fiber.poll(fiber)
+  
+  if (Option.isSome(result)) {
+    console.log("Fiber completed:", result.value)
+  } else {
+    console.log("Fiber still running")
+  }
+})
+```
+
+## Interruption
+
+### interrupt
+
+Interrupts a fiber, safely releasing all resources.
+
+```typescript
+import { Effect, Fiber } from "effect"
+
+const program = Effect.gen(function* () {
+  const fiber = yield* Effect.fork(
+    Effect.forever(Effect.sleep("1 second"))
+  )
+  
+  yield* Effect.sleep("5 seconds")
+  yield* Fiber.interrupt(fiber)
+})
+```
+
+### interruptFork
+
+Interrupts a fiber in the background without waiting.
+
+```typescript
+import { Effect, Fiber } from "effect"
+
+const program = Effect.gen(function* () {
+  const fiber = yield* Effect.fork(
+    Effect.forever(Effect.sleep("1 second"))
+  )
+  
+  yield* Fiber.interruptFork(fiber)
+  // Continues immediately without waiting
+})
+```
+
+## Combining Fibers
+
+### zip
+
+Combines two fibers into a single fiber producing a tuple.
+
+```typescript
+import { Effect, Fiber } from "effect"
+
+const program = Effect.gen(function* () {
+  const fiber1 = yield* Effect.fork(Effect.succeed(1))
+  const fiber2 = yield* Effect.fork(Effect.succeed("hello"))
+  
+  const combined = Fiber.zip(fiber1, fiber2)
+  const result = yield* Fiber.join(combined)
+  
+  console.log(result)  // [1, "hello"]
+})
+```
+
+### race
+
+Races two fibers, returning the result of the first to complete.
+
+```typescript
+import { Effect, Fiber } from "effect"
+
+const program = Effect.gen(function* () {
+  const fiber1 = yield* Effect.fork(
+    Effect.sleep("2 seconds").pipe(Effect.as(1))
+  )
+  const fiber2 = yield* Effect.fork(
+    Effect.sleep("1 second").pipe(Effect.as(2))
+  )
+  
+  const winner = Fiber.race(fiber1, fiber2)
+  const result = yield* Fiber.join(winner)
+  
+  console.log(result)  // 2
+})
+```
+
+## Fiber Inspection
+
+### status
+
+Retrieves the current status of a fiber.
+
+```typescript
+import { Effect, Fiber } from "effect"
+
+const program = Effect.gen(function* () {
+  const fiber = yield* Effect.fork(Effect.sleep("1 second"))
+  const status = yield* fiber.status
+  
+  console.log(status)
+  // Running or Done
+})
+```
+
+### children
+
+Retrieves all child fibers.
+
+```typescript
+import { Effect } from "effect"
+
+const program = Effect.gen(function* () {
+  const fiber = yield* Effect.fork(
+    Effect.all([
+      Effect.fork(Effect.succeed(1)),
+      Effect.fork(Effect.succeed(2))
+    ])
+  )
+  
+  const children = yield* fiber.children
+  console.log(children.length)  // 2
+})
+```
+
+## Concurrency Control
+
+### all
+
+Runs multiple effects concurrently as fibers.
+
+```typescript
+import { Effect } from "effect"
+
+const program = Effect.all([
+  Effect.sleep("1 second").pipe(Effect.as(1)),
+  Effect.sleep("1 second").pipe(Effect.as(2)),
+  Effect.sleep("1 second").pipe(Effect.as(3))
+], { concurrency: "unbounded" })
+
+// All complete in ~1 second instead of 3
+```
+
+### raceAll
+
+Races multiple effects, returning the first to complete.
+
+```typescript
+import { Effect } from "effect"
+
+const program = Effect.raceAll([
+  Effect.sleep("3 seconds").pipe(Effect.as(1)),
+  Effect.sleep("1 second").pipe(Effect.as(2)),
+  Effect.sleep("2 seconds").pipe(Effect.as(3))
+])
+
+Effect.runPromise(program).then(console.log)
+// 2 (after 1 second)
+```
+
+<Note>
+Fibers are automatically interrupted when their parent scope ends, ensuring proper resource cleanup. Use `forkDaemon` for long-running background tasks.
+</Note>
+
+## Use Cases
+
+- Concurrent request processing
+- Background tasks
+- Timeout handling
+- Parallelizing independent computations
+- Managing long-running operations
+
+## Key Operations
+
+| Operation | Description |
+|-----------|-------------|
+| `fork` | Creates a new fiber |
+| `await` | Waits for fiber completion |
+| `join` | Waits and extracts the value |
+| `interrupt` | Stops a fiber gracefully |
+| `poll` | Checks completion without blocking |
+| `zip` | Combines two fibers |
+| `race` | Races fibers to completion |
+| `status` | Gets current fiber status |
+| `children` | Lists child fibers |

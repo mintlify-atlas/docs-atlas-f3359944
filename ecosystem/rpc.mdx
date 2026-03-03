@@ -1,0 +1,264 @@
+---
+title: "@effect/rpc"
+description: "Build type-safe remote procedure calls with Effect"
+---
+
+`@effect/rpc` enables the development of type-safe RPC systems in TypeScript, providing end-to-end type safety between client and server with custom serialization, error handling, and middleware support.
+
+## Installation
+
+<CodeGroup>
+```bash npm
+npm install @effect/rpc @effect/platform
+```
+
+```bash pnpm
+pnpm add @effect/rpc @effect/platform
+```
+
+```bash yarn
+yarn add @effect/rpc @effect/platform
+```
+</CodeGroup>
+
+## Quick Start
+
+### 1. Define Requests
+
+Create your RPC schema using `RpcGroup` and `Rpc`:
+
+```ts
+// request.ts
+import { Rpc, RpcGroup } from "@effect/rpc"
+import { Schema } from "effect"
+
+export class User extends Schema.Class<User>("User")({
+  id: Schema.String,
+  name: Schema.String
+}) {}
+
+export class UserRpcs extends RpcGroup.make(
+  Rpc.make("UserList", {
+    success: User,
+    stream: true
+  }),
+  Rpc.make("UserById", {
+    success: User,
+    error: Schema.String,
+    payload: {
+      id: Schema.String
+    }
+  }),
+  Rpc.make("UserCreate", {
+    success: User,
+    payload: {
+      name: Schema.String
+    }
+  })
+) {}
+```
+
+### 2. Implement Handlers
+
+Create the server-side logic:
+
+```ts
+// handlers.ts
+import type { Rpc } from "@effect/rpc"
+import { Effect, Layer, Stream } from "effect"
+import { User, UserRpcs } from "./request.js"
+
+class UserRepository extends Effect.Service<UserRepository>()("UserRepository", {
+  effect: Effect.gen(function* () {
+    // Your database implementation
+    return {
+      findMany: Effect.succeed([new User({ id: "1", name: "Alice" })]),
+      findById: (id: string) => /* ... */,
+      create: (name: string) => /* ... */
+    }
+  })
+}) {}
+
+export const UsersLive: Layer.Layer<
+  Rpc.Handler<"UserList"> | Rpc.Handler<"UserById"> | Rpc.Handler<"UserCreate">
+> = UserRpcs.toLayer(
+  Effect.gen(function* () {
+    const db = yield* UserRepository
+
+    return {
+      UserList: () => Stream.fromIterableEffect(db.findMany),
+      UserById: ({ id }) => db.findById(id),
+      UserCreate: ({ name }) => db.create(name)
+    }
+  })
+).pipe(Layer.provide(UserRepository.Default))
+```
+
+### 3. Serve the API
+
+```ts
+// server.ts
+import { HttpRouter } from "@effect/platform"
+import { BunHttpServer, BunRuntime } from "@effect/platform-bun"
+import { RpcSerialization, RpcServer } from "@effect/rpc"
+import { Layer } from "effect"
+import { UsersLive } from "./handlers.js"
+import { UserRpcs } from "./request.js"
+
+const RpcLayer = RpcServer.layer(UserRpcs).pipe(
+  Layer.provide(UsersLive)
+)
+
+const HttpProtocol = RpcServer.layerProtocolHttp({
+  path: "/rpc"
+}).pipe(Layer.provide(RpcSerialization.layerNdjson))
+
+const Main = HttpRouter.Default.serve().pipe(
+  Layer.provide(RpcLayer),
+  Layer.provide(HttpProtocol),
+  Layer.provide(BunHttpServer.layer({ port: 3000 }))
+)
+
+BunRuntime.runMain(Layer.launch(Main))
+```
+
+### 4. Use the Client
+
+Enjoy end-to-end type safety:
+
+```ts
+// client.ts
+import { FetchHttpClient } from "@effect/platform"
+import { RpcClient, RpcSerialization } from "@effect/rpc"
+import { Effect, Layer, Stream } from "effect"
+import { UserRpcs } from "./request.js"
+
+const ProtocolLive = RpcClient.layerProtocolHttp({
+  url: "http://localhost:3000/rpc"
+}).pipe(
+  Layer.provide([
+    FetchHttpClient.layer,
+    RpcSerialization.layerNdjson
+  ])
+)
+
+const program = Effect.gen(function* () {
+  const client = yield* RpcClient.make(UserRpcs)
+  
+  const users = yield* Stream.runCollect(client.UserList({}))
+  const user = yield* client.UserById({ id: "1" })
+  const newUser = yield* client.UserCreate({ name: "Bob" })
+  
+  return { users, user, newUser }
+}).pipe(Effect.scoped)
+
+program.pipe(
+  Effect.provide(ProtocolLive),
+  Effect.runPromise
+).then(console.log)
+```
+
+## Middleware
+
+Add authentication and other cross-cutting concerns:
+
+```ts
+// middleware.ts
+import { RpcMiddleware } from "@effect/rpc"
+import { Context } from "effect"
+import type { User } from "./request.js"
+
+export class CurrentUser extends Context.Tag("CurrentUser")<
+  CurrentUser,
+  User
+>() {}
+
+export class AuthMiddleware extends RpcMiddleware.Tag<AuthMiddleware>()("AuthMiddleware", {
+  provides: CurrentUser,
+  requiredForClient: true
+}) {}
+```
+
+Implement server middleware:
+
+```ts
+import { AuthMiddleware } from "./middleware.js"
+import { Effect, Layer } from "effect"
+
+export const AuthLive: Layer.Layer<AuthMiddleware> = Layer.succeed(
+  AuthMiddleware,
+  AuthMiddleware.of(({ headers, payload, rpc }) =>
+    Effect.succeed(new User({ id: "123", name: "Logged in user" }))
+  )
+)
+
+// Apply to server
+RpcServer.layer(UserRpcs).pipe(Layer.provide(AuthLive))
+```
+
+Implement client middleware:
+
+```ts
+import { Headers } from "@effect/platform"
+import { RpcMiddleware } from "@effect/rpc"
+
+export const AuthClientLive = RpcMiddleware.layerClient(
+  AuthMiddleware,
+  ({ request, rpc }) =>
+    Effect.succeed({
+      ...request,
+      headers: Headers.set(request.headers, "authorization", "Bearer token")
+    })
+)
+
+export class UsersClient extends Effect.Service<UsersClient>()("UsersClient", {
+  scoped: RpcClient.make(UserRpcs),
+  dependencies: [AuthClientLive]
+}) {}
+```
+
+## Serialization Formats
+
+<CardGroup cols={2}>
+  <Card title="NDJSON" icon="file-code">
+    ```ts
+    RpcSerialization.layerNdjson
+    ```
+    Newline-delimited JSON (default)
+  </Card>
+  <Card title="MessagePack" icon="box">
+    ```ts
+    RpcSerialization.layerMsgpack
+    ```
+    Binary format for efficiency
+  </Card>
+</CardGroup>
+
+## Key Features
+
+- **End-to-End Type Safety**: Share types between client and server
+- **Schema Validation**: Automatic validation using Effect schemas
+- **Streaming Support**: Stream data with `stream: true`
+- **Custom Serialization**: Choose JSON, MessagePack, or custom formats
+- **Middleware**: Add authentication, logging, and more
+- **Error Handling**: Type-safe error responses
+- **Multiple Protocols**: HTTP, WebSocket, or custom transports
+
+## Testing with curl
+
+```bash
+curl -X POST http://localhost:3000/rpc \
+     -H "Content-Type: application/ndjson" \
+     -d '{"_tag": "Request", "id": "123", "tag": "UserList", "payload": {}, "traceId": "traceId", "spanId": "spanId", "sampled": true, "headers": [] }'
+```
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="API Reference" href="https://effect-ts.github.io/effect/docs/rpc">
+    Complete API documentation
+  </Card>
+  <Card title="@effect/platform" href="/ecosystem/platform">
+    HTTP server and client abstractions
+  </Card>
+</CardGroup>

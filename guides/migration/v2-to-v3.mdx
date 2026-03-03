@@ -1,0 +1,469 @@
+---
+title: 'Upgrading from v2 to v3'
+description: 'Guide to upgrading Effect from version 2 to version 3'
+icon: 'arrow-up'
+---
+
+Effect v3 introduces several breaking changes to improve type safety, consistency, and developer experience.
+
+## Installation
+
+Update your dependencies to the latest versions:
+
+```bash
+pnpm update effect@latest
+```
+
+## Breaking Changes
+
+### Module Reorganization
+
+Several modules have been reorganized for better consistency.
+
+<CodeGroup>
+```typescript Before (v2)
+import * as Effect from "@effect/io/Effect"
+import * as Layer from "@effect/io/Layer"
+import * as Runtime from "@effect/io/Runtime"
+import * as Stream from "@effect/stream/Stream"
+```
+
+```typescript After (v3)
+import { Effect, Layer, Runtime } from "effect"
+import { Stream } from "effect"
+```
+</CodeGroup>
+
+<Tip>
+All core modules are now exported from the single `effect` package.
+</Tip>
+
+### Service Definition
+
+Service definition has been simplified with a new Context.Tag API.
+
+<CodeGroup>
+```typescript Before (v2)
+import { Context } from "effect"
+
+interface Database {
+  readonly query: (sql: string) => Effect.Effect<unknown, Error>
+}
+
+const Database = Context.Tag<Database>("@app/Database")
+```
+
+```typescript After (v3)
+import { Context } from "effect"
+
+class Database extends Context.Tag("@app/Database")<
+  Database,
+  {
+    readonly query: (sql: string) => Effect.Effect<unknown, Error>
+  }
+>() {}
+```
+</CodeGroup>
+
+<Warning>
+The new class-based approach provides better type inference and IDE support. Update all service definitions.
+</Warning>
+
+### Layer Construction
+
+<CodeGroup>
+```typescript Before (v2)
+const DatabaseLive = Layer.succeed(
+  Database,
+  {
+    query: (sql) => Effect.succeed(/* ... */)
+  }
+)
+```
+
+```typescript After (v3)
+const DatabaseLive = Layer.succeed(
+  Database,
+  Database.of({
+    query: (sql) => Effect.succeed(/* ... */)
+  })
+)
+```
+</CodeGroup>
+
+### Effect.gen Changes
+
+The generator API remains similar but has improved type inference.
+
+<CodeGroup>
+```typescript Before (v2)
+const program = Effect.gen(function* ($) {
+  const value = yield* $(Effect.succeed(42))
+  return value
+})
+```
+
+```typescript After (v3)
+const program = Effect.gen(function* () {
+  const value = yield* Effect.succeed(42)
+  return value
+})
+```
+</CodeGroup>
+
+<Tip>
+The `$` adapter is no longer needed. You can yield Effects directly.
+</Tip>
+
+### Error Channel Type
+
+Error types are now more strictly enforced.
+
+<CodeGroup>
+```typescript Before (v2)
+const effect: Effect.Effect<never, unknown, number> =
+  Effect.fail("error")
+```
+
+```typescript After (v3)
+class MyError {
+  readonly _tag = "MyError"
+  constructor(readonly message: string) {}
+}
+
+const effect: Effect.Effect<number, MyError> =
+  Effect.fail(new MyError("error"))
+```
+</CodeGroup>
+
+<Warning>
+Always use structured error types instead of strings or unknown. This improves type safety and error handling.
+</Warning>
+
+### Scope and Resource Management
+
+<CodeGroup>
+```typescript Before (v2)
+Effect.acquireUseRelease(
+  acquire,
+  use,
+  release
+)
+```
+
+```typescript After (v3)
+Effect.acquireRelease(acquire, release).pipe(
+  Effect.flatMap(use)
+)
+
+// Or use Effect.scoped
+const scoped = Effect.scoped(
+  Effect.acquireRelease(acquire, release)
+)
+```
+</CodeGroup>
+
+### Config Changes
+
+Configuration has been streamlined.
+
+<CodeGroup>
+```typescript Before (v2)
+import * as Config from "@effect/io/Config"
+
+const port = Config.number("PORT").pipe(
+  Config.withDefault(3000)
+)
+```
+
+```typescript After (v3)
+import { Config } from "effect"
+
+const port = Config.number("PORT").pipe(
+  Config.withDefault(3000)
+)
+```
+</CodeGroup>
+
+### Schedule Changes
+
+Schedule combinators have been refined.
+
+<CodeGroup>
+```typescript Before (v2)
+import * as Schedule from "@effect/io/Schedule"
+
+const schedule = Schedule.exponential("100 millis").pipe(
+  Schedule.either(Schedule.spaced("1 second"))
+)
+```
+
+```typescript After (v3)
+import { Schedule, Duration } from "effect"
+
+const schedule = Schedule.exponential(Duration.millis(100)).pipe(
+  Schedule.union(Schedule.spaced(Duration.seconds(1)))
+)
+```
+</CodeGroup>
+
+<Tip>
+Duration helpers replace string-based duration parsing for better type safety.
+</Tip>
+
+### Stream Changes
+
+<CodeGroup>
+```typescript Before (v2)
+import * as Stream from "@effect/stream/Stream"
+
+const stream = Stream.fromIterable([1, 2, 3])
+```
+
+```typescript After (v3)
+import { Stream } from "effect"
+
+const stream = Stream.fromIterable([1, 2, 3])
+```
+</CodeGroup>
+
+### Runtime Changes
+
+<CodeGroup>
+```typescript Before (v2)
+import * as Runtime from "@effect/io/Runtime"
+
+const runtime = Runtime.defaultRuntime
+
+Runtime.run(runtime, effect)
+```
+
+```typescript After (v3)
+import { Runtime, Effect } from "effect"
+
+const runtime = Runtime.defaultRuntime
+
+Runtime.runSync(runtime)(effect)
+// or
+Runtime.runPromise(runtime)(effect)
+```
+</CodeGroup>
+
+## New Features in v3
+
+### Refined Concurrency Control
+
+Better control over concurrent operations.
+
+```typescript
+const results = yield* Effect.forEach(
+  items,
+  processItem,
+  { concurrency: 5 } // or "unbounded", "inherit"
+)
+```
+
+### Improved Interruption
+
+More granular interruption control.
+
+```typescript
+const program = Effect.uninterruptible(
+  criticalSection
+).pipe(
+  Effect.zipRight(
+    Effect.interruptible(interruptibleSection)
+  )
+)
+```
+
+### Better Type Inference
+
+Type inference has been significantly improved throughout.
+
+```typescript
+const result = yield* Effect.all({
+  user: fetchUser(),
+  settings: fetchSettings(),
+  // Return type is automatically inferred
+})
+// result: { user: User, settings: Settings }
+```
+
+### Enhanced Error Handling
+
+New error handling combinators.
+
+```typescript
+const program = effect.pipe(
+  Effect.catchTag("NetworkError", error =>
+    Effect.log("Network failed").pipe(
+      Effect.zipRight(Effect.fail(error))
+    )
+  ),
+  Effect.catchTag("ValidationError", error =>
+    Effect.succeed(defaultValue)
+  )
+)
+```
+
+## Migration Strategy
+
+### Step 1: Update Imports
+
+Replace all imports with the new package structure.
+
+```bash
+# Find and replace in your codebase
+@effect/io/Effect -> effect
+@effect/stream/Stream -> effect
+```
+
+### Step 2: Update Service Definitions
+
+Convert all Context.Tag usages to the new class-based API.
+
+```typescript
+// Old pattern
+const Service = Context.Tag<ServiceInterface>("Service")
+
+// New pattern
+class Service extends Context.Tag("Service")<
+  Service,
+  ServiceInterface
+>() {}
+```
+
+### Step 3: Update Effect.gen
+
+Remove the `$` adapter from all generator functions.
+
+```bash
+# Find: yield* $(effect)
+# Replace: yield* effect
+```
+
+### Step 4: Type Your Errors
+
+Define proper error types for all failure cases.
+
+```typescript
+class ValidationError {
+  readonly _tag = "ValidationError"
+  constructor(readonly errors: string[]) {}
+}
+
+class NetworkError {
+  readonly _tag = "NetworkError"
+  constructor(readonly cause: unknown) {}
+}
+
+type AppError = ValidationError | NetworkError
+```
+
+### Step 5: Run Tests
+
+Ensure all tests pass after migration.
+
+```bash
+pnpm test
+```
+
+### Step 6: Update Type Annotations
+
+Review and update type annotations to leverage improved inference.
+
+<CodeGroup>
+```typescript Before
+const program: Effect.Effect<never, Error, Result> = Effect.gen(function* () {
+  // ...
+})
+```
+
+```typescript After
+const program: Effect.Effect<Result, Error> = Effect.gen(function* () {
+  // ...
+})
+```
+</CodeGroup>
+
+## Common Migration Issues
+
+### Issue: Import Errors
+
+**Problem**: Cannot find module `@effect/io/Effect`
+
+**Solution**: Update to new import structure:
+
+```typescript
+import { Effect } from "effect"
+```
+
+### Issue: Type Errors with Context.Tag
+
+**Problem**: Context.Tag no longer accepts interface directly
+
+**Solution**: Use class-based syntax:
+
+```typescript
+class MyService extends Context.Tag("MyService")<
+  MyService,
+  ServiceInterface
+>() {}
+```
+
+### Issue: Generator Function Errors
+
+**Problem**: Type errors with `yield* $(effect)`
+
+**Solution**: Remove the `$` adapter:
+
+```typescript
+const value = yield* effect // No $ needed
+```
+
+## Testing After Migration
+
+Update your test setup to use the new APIs:
+
+```typescript
+import { it } from "@effect/vitest"
+import { Effect, Layer } from "effect"
+
+it.effect("should process user", () =>
+  Effect.gen(function* () {
+    const service = yield* MyService
+    const result = yield* service.processUser("123")
+    assert.strictEqual(result.id, "123")
+  }).pipe(
+    Effect.provide(MyServiceTest)
+  )
+)
+```
+
+<Tip>
+Use `it.effect` from `@effect/vitest` for testing Effect programs. It handles the Effect runtime automatically.
+</Tip>
+
+## Performance Improvements
+
+v3 includes several performance optimizations:
+
+- Reduced memory allocations
+- Faster fiber scheduling
+- Improved concurrent execution
+- Better tree-shaking support
+
+## Next Steps
+
+- Review the [Type Safety Guide](/guides/best-practices/type-safety)
+- Learn about [Testing Strategies](/guides/best-practices/testing-strategies)
+- Explore [Performance Optimization](/guides/best-practices/performance-optimization)
+
+## Getting Help
+
+If you encounter issues during migration:
+
+- Check the [Effect Discord](https://discord.gg/effect-ts)
+- Review [GitHub Discussions](https://github.com/Effect-TS/effect/discussions)
+- File issues on [GitHub](https://github.com/Effect-TS/effect/issues)

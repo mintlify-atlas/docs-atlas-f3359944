@@ -1,0 +1,371 @@
+---
+title: Schema
+description: Define, validate, and transform data with Effect's powerful schema system
+---
+
+Effect Schema provides type-safe data validation, transformation, and serialization.
+
+## Defining Schemas
+
+### Primitives
+
+```typescript
+import { Schema } from "effect"
+
+const StringSchema = Schema.String
+const NumberSchema = Schema.Number
+const BooleanSchema = Schema.Boolean
+const BigIntSchema = Schema.BigInt
+```
+
+### Literals
+
+```typescript
+import { Schema } from "effect"
+
+const StatusSchema = Schema.Literal("active", "inactive", "pending")
+const VersionSchema = Schema.Literal(1, 2, 3)
+```
+
+### Structs
+
+```typescript
+import { Schema } from "effect"
+
+const UserSchema = Schema.Struct({
+  id: Schema.Number,
+  name: Schema.String,
+  email: Schema.String,
+  age: Schema.optional(Schema.Number),
+  roles: Schema.Array(Schema.String)
+})
+
+type User = Schema.Schema.Type<typeof UserSchema>
+// type User = {
+//   id: number
+//   name: string
+//   email: string
+//   age?: number
+//   roles: string[]
+// }
+```
+
+### Unions
+
+```typescript
+import { Schema } from "effect"
+
+const ResultSchema = Schema.Union(
+  Schema.Struct({
+    type: Schema.Literal("success"),
+    value: Schema.Number
+  }),
+  Schema.Struct({
+    type: Schema.Literal("error"),
+    message: Schema.String
+  })
+)
+```
+
+### Arrays and Tuples
+
+```typescript
+import { Schema } from "effect"
+
+const NumberArraySchema = Schema.Array(Schema.Number)
+const CoordinateSchema = Schema.Tuple(Schema.Number, Schema.Number)
+const MixedTupleSchema = Schema.Tuple(Schema.String, Schema.Number, Schema.Boolean)
+```
+
+## Validation
+
+### Decoding (Parsing)
+
+```typescript
+import { Effect, Schema } from "effect"
+
+const UserSchema = Schema.Struct({
+  name: Schema.String,
+  age: Schema.Number
+})
+
+const program = Effect.gen(function*() {
+  // Decode from unknown
+  const user = yield* Schema.decode(UserSchema)({
+    name: "Alice",
+    age: 30
+  })
+  
+  console.log(user)
+  // { name: "Alice", age: 30 }
+})
+
+// Synchronous decoding
+const result = Schema.decodeSync(UserSchema)({
+  name: "Bob",
+  age: 25
+})
+
+// With Either for error handling
+import { Either } from "effect"
+
+const either = Schema.decodeEither(UserSchema)({ name: "Charlie", age: "invalid" })
+
+if (Either.isLeft(either)) {
+  console.error("Validation failed:", either.left)
+} else {
+  console.log("Valid user:", either.right)
+}
+```
+
+### Encoding
+
+```typescript
+import { Schema } from "effect"
+
+const user = { name: "Alice", age: 30 }
+const encoded = Schema.encodeSync(UserSchema)(user)
+```
+
+### Validation
+
+```typescript
+import { Schema } from "effect"
+
+// Validate without transformation
+const valid = Schema.validateSync(UserSchema)({
+  name: "Alice",
+  age: 30
+})
+```
+
+## Transformations
+
+### Simple Transformations
+
+```typescript
+import { Schema } from "effect"
+
+const TrimmedString = Schema.String.pipe(
+  Schema.transform(
+    Schema.String,
+    { decode: (s) => s.trim(), encode: (s) => s }
+  )
+)
+
+const result = Schema.decodeSync(TrimmedString)("  hello  ")
+// "hello"
+```
+
+### DateFromString
+
+```typescript
+import { Schema } from "effect"
+
+const DateFromISOString = Schema.transformOrFail(
+  Schema.String,
+  Schema.Date,
+  {
+    decode: (s, _, ast) => {
+      const date = new Date(s)
+      return isNaN(date.getTime())
+        ? ParseResult.fail(new ParseResult.Type(ast, s))
+        : ParseResult.succeed(date)
+    },
+    encode: (date) => ParseResult.succeed(date.toISOString())
+  }
+)
+
+const EventSchema = Schema.Struct({
+  name: Schema.String,
+  date: DateFromISOString
+})
+```
+
+### NumberFromString
+
+```typescript
+import { Schema } from "effect"
+
+const NumberFromString = Schema.transformOrFail(
+  Schema.String,
+  Schema.Number,
+  {
+    decode: (s, _, ast) => {
+      const n = Number(s)
+      return isNaN(n)
+        ? ParseResult.fail(new ParseResult.Type(ast, s))
+        : ParseResult.succeed(n)
+    },
+    encode: (n) => ParseResult.succeed(String(n))
+  }
+)
+```
+
+## Refinements
+
+### Built-in Refinements
+
+```typescript
+import { Schema } from "effect"
+
+const PositiveNumber = Schema.Number.pipe(Schema.positive())
+const Email = Schema.String.pipe(Schema.pattern(/^[^@]+@[^@]+\.[^@]+$/))
+const NonEmptyString = Schema.String.pipe(Schema.minLength(1))
+const BoundedNumber = Schema.Number.pipe(Schema.greaterThan(0), Schema.lessThan(100))
+```
+
+### Custom Refinements
+
+```typescript
+import { Schema, ParseResult } from "effect"
+
+const EvenNumber = Schema.Number.pipe(
+  Schema.filter((n) => n % 2 === 0, {
+    message: () => "Expected an even number"
+  })
+)
+
+const Username = Schema.String.pipe(
+  Schema.filter((s) => {
+    if (s.length < 3) return "Username must be at least 3 characters"
+    if (s.length > 20) return "Username must be at most 20 characters"
+    if (!/^[a-zA-Z0-9_]+$/.test(s)) return "Username can only contain letters, numbers, and underscores"
+    return true
+  })
+)
+```
+
+## Brands
+
+Create nominal types:
+
+```typescript
+import { Schema, Brand } from "effect"
+
+type UserId = number & Brand.Brand<"UserId">
+const UserId = Schema.Number.pipe(Schema.brand("UserId"))
+
+type Email = string & Brand.Brand<"Email">
+const Email = Schema.String.pipe(
+  Schema.pattern(/^[^@]+@[^@]+$/),
+  Schema.brand("Email")
+)
+
+const user = {
+  id: UserId.make(123),
+  email: Email.make("user@example.com")
+}
+
+// Type safety: can't mix up different IDs
+type PostId = number & Brand.Brand<"PostId">
+const PostId = Schema.Number.pipe(Schema.brand("PostId"))
+
+// ❌ Type error: can't assign UserId to PostId
+// const postId: PostId = user.id
+```
+
+## Optional Fields
+
+```typescript
+import { Schema } from "effect"
+
+const UserSchema = Schema.Struct({
+  name: Schema.String,
+  age: Schema.optional(Schema.Number),
+  email: Schema.optional(Schema.String, { default: () => "no-email@example.com" }),
+  role: Schema.optional(Schema.String, { nullable: true })
+})
+
+type User = Schema.Schema.Type<typeof UserSchema>
+// type User = {
+//   name: string
+//   age?: number
+//   email: string
+//   role?: string | null
+// }
+```
+
+## Advanced Schemas
+
+### Recursive Schemas
+
+```typescript
+import { Schema } from "effect"
+
+interface Category {
+  name: string
+  subcategories: ReadonlyArray<Category>
+}
+
+const CategorySchema: Schema.Schema<Category> = Schema.Struct({
+  name: Schema.String,
+  subcategories: Schema.Array(Schema.suspend(() => CategorySchema))
+})
+```
+
+### Extend
+
+```typescript
+import { Schema } from "effect"
+
+const PersonSchema = Schema.Struct({
+  name: Schema.String,
+  age: Schema.Number
+})
+
+const EmployeeSchema = PersonSchema.pipe(
+  Schema.extend(Schema.Struct({
+    employeeId: Schema.Number,
+    department: Schema.String
+  }))
+)
+```
+
+### Pick and Omit
+
+```typescript
+import { Schema } from "effect"
+
+const UserSchema = Schema.Struct({
+  id: Schema.Number,
+  name: Schema.String,
+  email: Schema.String,
+  password: Schema.String
+})
+
+const PublicUserSchema = UserSchema.pipe(
+  Schema.omit("password")
+)
+
+const LoginSchema = UserSchema.pipe(
+  Schema.pick("email", "password")
+)
+```
+
+## Error Handling
+
+```typescript
+import { Effect, Schema, ParseResult } from "effect"
+
+const program = Effect.gen(function*() {
+  const result = yield* Schema.decode(UserSchema)(invalidData).pipe(
+    Effect.catchTag("ParseError", (error) =>
+      Effect.gen(function*() {
+        // Format error for display
+        const formatted = yield* ParseResult.ArrayFormatter.formatIssue(error.issue)
+        console.error("Validation errors:", formatted)
+        return defaultUser
+      })
+    )
+  )
+})
+```
+
+<Tip>
+Use `Schema.annotations()` to add metadata like descriptions, examples, and JSON Schema properties for documentation generation.
+</Tip>
+
+<Warning>
+Schemas with transformations have both `Type` (decoded) and `Encoded` forms. Use `Schema.Schema.Type<S>` for the decoded type and `Schema.Schema.Encoded<S>` for the encoded type.
+</Warning>

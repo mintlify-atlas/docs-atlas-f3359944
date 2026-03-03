@@ -1,0 +1,63 @@
+---
+title: Clock
+description: API reference for the Clock service - time operations
+---
+
+The `Clock` service provides access to time-related operations.
+
+## Type Definition
+
+```typescript
+interface Clock {
+  readonly currentTimeMillis: Effect<number>
+  readonly currentTimeNanos: Effect<bigint>
+  readonly sleep: (duration: Duration) => Effect<void>
+}
+```
+
+## Operations
+
+### currentTimeMillis
+
+Gets current time in milliseconds.
+
+```typescript
+const currentTimeMillis: Effect<number, never, never>
+```
+
+### currentTimeNanos
+
+Gets current time in nanoseconds.
+
+```typescript
+const currentTimeNanos: Effect<bigint, never, never>
+```
+
+### sleep
+
+Sleeps for a given duration.
+
+```typescript
+const sleep: (duration: Duration) => Effect<void>
+```
+
+### clockWith
+
+Accesses the Clock service.
+
+```typescript
+const clockWith: <A, E, R>(f: (clock: Clock) => Effect<A, E, R>) => Effect<A, E, R>
+```
+
+## Example
+
+```typescript
+import { Clock, Effect } from "effect"
+
+const program = Effect.gen(function* () {
+  const start = yield* Clock.currentTimeMillis
+  yield* Clock.sleep("1 second")
+  const end = yield* Clock.currentTimeMillis
+  console.log(`Elapsed: ${end - start}ms`)
+})
+```

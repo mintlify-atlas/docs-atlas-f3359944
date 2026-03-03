@@ -1,0 +1,474 @@
+---
+title: Concurrency
+description: Concurrent execution with Fiber, fork, race, and all
+---
+
+Effect provides powerful primitives for concurrent programming through fibers, which are lightweight threads of execution.
+
+## Fiber - Lightweight Concurrency
+
+```typescript
+interface Fiber<out A, out E = never> extends Effect<A, E> {
+  id(): FiberId.FiberId
+  readonly await: Effect<Exit<A, E>>
+  readonly children: Effect<Array<Fiber.Runtime<any, any>>>
+  readonly inheritAll: Effect<void>
+  readonly poll: Effect<Option<Exit<A, E>>>
+  interruptAsFork(fiberId: FiberId.FiberId): Effect<void>
+}
+```
+
+A fiber is a lightweight, managed thread of execution. Unlike OS threads, fibers:
+- Are extremely cheap to create (millions can exist)
+- Are automatically interrupted when their parent completes
+- Compose with Effect's error handling and resource management
+
+## fork - Concurrent Execution
+
+```typescript
+export const fork: <A, E, R>(self: Effect<A, E, R>) => Effect<Fiber.RuntimeFiber<A, E>, never, R>
+```
+
+Fork an effect to run it concurrently:
+
+```typescript
+import { Effect } from "effect"
+
+const task = Effect.gen(function* () {
+  yield* Effect.sleep("2 seconds")
+  return "Task complete"
+})
+
+const program = Effect.gen(function* () {
+  console.log("Forking task...")
+  const fiber = yield* Effect.fork(task)
+  console.log("Task running in background")
+
+  // Do other work while task runs
+  yield* Effect.sleep("1 second")
+  console.log("Doing other work...")
+
+  // Wait for the task to complete
+  const result = yield* fiber.await
+  console.log(result)
+})
+
+Effect.runPromise(program)
+// Output:
+// Forking task...
+// Task running in background
+// Doing other work...
+// { _tag: 'Success', value: 'Task complete' }
+```
+
+<Steps>
+
+### Fiber Lifecycle
+
+Forked fibers are children of their parent fiber:
+
+```typescript
+import { Effect } from "effect"
+
+const child = Effect.gen(function* () {
+  yield* Effect.sleep("10 seconds")
+  console.log("Child completed")
+})
+
+const parent = Effect.gen(function* () {
+  yield* Effect.fork(child)
+  yield* Effect.sleep("1 second")
+  console.log("Parent completing")
+})
+// When parent completes, child is automatically interrupted
+
+Effect.runPromise(parent)
+// Output:
+// Parent completing
+// (child never logs because it's interrupted)
+```
+
+### Daemon Fibers
+
+Use `forkDaemon` for background tasks that outlive their parent:
+
+```typescript
+import { Effect, Schedule } from "effect"
+
+const daemon = Effect.repeat(
+  Effect.log("daemon: still running!"),
+  Schedule.fixed("1 second")
+)
+
+const parent = Effect.gen(function* () {
+  console.log("parent: started!")
+  yield* Effect.forkDaemon(daemon)
+  yield* Effect.sleep("3 seconds")
+  console.log("parent: finished!")
+})
+
+Effect.runFork(parent)
+// Output:
+// parent: started!
+// daemon: still running!
+// daemon: still running!
+// daemon: still running!
+// parent: finished!
+// daemon: still running!
+// daemon: still running!
+// ...continues forever
+```
+
+### Joining Fibers
+
+Use `join` to get the result (or error) from a fiber:
+
+```typescript
+import { Effect, Fiber } from "effect"
+
+const program = Effect.gen(function* () {
+  const fiber = yield* Effect.fork(Effect.succeed(42))
+  const result = yield* Fiber.join(fiber)
+  console.log(result)  // 42
+})
+```
+
+</Steps>
+
+## race - First to Complete
+
+```typescript
+export const race: {
+  <A2, E2, R2>(that: Effect<A2, E2, R2>): <A, E, R>(self: Effect<A, E, R>) => Effect<A2 | A, E2 | E, R2 | R>
+  <A, E, R, A2, E2, R2>(self: Effect<A, E, R>, that: Effect<A2, E2, R2>): Effect<A | A2, E | E2, R | R2>
+}
+```
+
+Race two effects and return the first to succeed:
+
+```typescript
+import { Effect } from "effect"
+
+const fast = Effect.succeed("fast").pipe(
+  Effect.delay("100 millis")
+)
+
+const slow = Effect.succeed("slow").pipe(
+  Effect.delay("1 second")
+)
+
+const program = Effect.race(fast, slow)
+
+Effect.runPromise(program).then(console.log)
+// Output (after 100ms): fast
+```
+
+<Steps>
+
+### Automatic Interruption
+
+The loser is automatically interrupted:
+
+```typescript
+import { Effect } from "effect"
+
+const task1 = Effect.succeed("task1").pipe(
+  Effect.delay("100 millis"),
+  Effect.tap(() => Effect.log("task1 done")),
+  Effect.onInterrupt(() => Effect.log("task1 interrupted"))
+)
+
+const task2 = Effect.succeed("task2").pipe(
+  Effect.delay("200 millis"),
+  Effect.tap(() => Effect.log("task2 done")),
+  Effect.onInterrupt(() => Effect.log("task2 interrupted"))
+)
+
+Effect.runPromise(Effect.race(task1, task2))
+// Output:
+// task1 done
+// task2 interrupted
+```
+
+### raceAll - Multiple Competitors
+
+```typescript
+import { Effect } from "effect"
+
+const task1 = Effect.succeed("task1").pipe(Effect.delay("100 millis"))
+const task2 = Effect.succeed("task2").pipe(Effect.delay("200 millis"))
+const task3 = Effect.succeed("task3").pipe(Effect.delay("150 millis"))
+
+const program = Effect.raceAll([task1, task2, task3])
+
+Effect.runPromise(program).then(console.log)
+// Output: task1
+```
+
+### Error Handling in Races
+
+If the winner fails, the race fails:
+
+```typescript
+import { Effect } from "effect"
+
+const failing = Effect.fail("error").pipe(
+  Effect.delay("100 millis")
+)
+
+const succeeding = Effect.succeed("success").pipe(
+  Effect.delay("200 millis")
+)
+
+Effect.runPromise(Effect.race(failing, succeeding))
+// Rejects with "error" after 100ms
+```
+
+If the first to complete fails, the next completes, and so on.
+
+</Steps>
+
+## all - Concurrent Combinations
+
+```typescript
+export const all: <
+  const Arg extends Iterable<Effect<any, any, any>> | Record<string, Effect<any, any, any>>,
+  O extends {
+    readonly concurrency?: Concurrency | undefined
+    readonly batching?: boolean | "inherit" | undefined
+    readonly discard?: boolean | undefined
+    readonly mode?: "default" | "validate" | "either" | undefined
+  }
+>(arg: Arg, options?: O) => All.Return<Arg, O>
+```
+
+Combine multiple effects, optionally running them concurrently:
+
+<Steps>
+
+### Sequential Execution (Default)
+
+```typescript
+import { Effect } from "effect"
+
+const task1 = Effect.succeed(1).pipe(
+  Effect.delay("100 millis"),
+  Effect.tap(() => Effect.log("task1"))
+)
+
+const task2 = Effect.succeed(2).pipe(
+  Effect.delay("100 millis"),
+  Effect.tap(() => Effect.log("task2"))
+)
+
+const program = Effect.all([task1, task2])
+
+Effect.runPromise(program).then(console.log)
+// Output (200ms total):
+// task1
+// task2
+// [1, 2]
+```
+
+### Concurrent Execution
+
+```typescript
+import { Effect } from "effect"
+
+const task1 = Effect.succeed(1).pipe(
+  Effect.delay("100 millis"),
+  Effect.tap(() => Effect.log("task1"))
+)
+
+const task2 = Effect.succeed(2).pipe(
+  Effect.delay("100 millis"),
+  Effect.tap(() => Effect.log("task2"))
+)
+
+const program = Effect.all([task1, task2], { concurrency: "unbounded" })
+
+Effect.runPromise(program).then(console.log)
+// Output (100ms total - tasks run in parallel):
+// task1
+// task2
+// [1, 2]
+```
+
+### Limited Concurrency
+
+```typescript
+import { Effect } from "effect"
+
+const tasks = Array.from({ length: 10 }, (_, i) =>
+  Effect.succeed(i).pipe(
+    Effect.delay("100 millis"),
+    Effect.tap(() => Effect.log(`Task ${i}`))
+  )
+)
+
+// Run at most 3 tasks concurrently
+const program = Effect.all(tasks, { concurrency: 3 })
+```
+
+### Object Support
+
+```typescript
+import { Effect } from "effect"
+
+const program = Effect.all({
+  user: fetchUser(123),
+  posts: fetchPosts(123),
+  comments: fetchComments(123)
+}, { concurrency: "unbounded" })
+// Effect<{ user: User, posts: Post[], comments: Comment[] }>
+
+const result = await Effect.runPromise(program)
+console.log(result.user, result.posts, result.comments)
+```
+
+### Error Handling Modes
+
+**Default mode**: Short-circuits on first error:
+
+```typescript
+import { Effect } from "effect"
+
+const program = Effect.all([
+  Effect.succeed(1),
+  Effect.fail("error"),
+  Effect.succeed(3)
+], { concurrency: "unbounded" })
+
+// Fails with "error", task 3 is interrupted
+```
+
+**Either mode**: Collects all results as Either:
+
+```typescript
+import { Effect, Either } from "effect"
+
+const program = Effect.all([
+  Effect.succeed(1),
+  Effect.fail("error"),
+  Effect.succeed(3)
+], { mode: "either", concurrency: "unbounded" })
+
+const results = await Effect.runPromise(program)
+// [
+//   { _tag: 'Right', right: 1 },
+//   { _tag: 'Left', left: 'error' },
+//   { _tag: 'Right', right: 3 }
+// ]
+```
+
+**Validate mode**: Accumulates errors:
+
+```typescript
+import { Effect } from "effect"
+
+const program = Effect.all([
+  Effect.fail("error1"),
+  Effect.fail("error2"),
+  Effect.succeed(3)
+], { mode: "validate" })
+
+// Fails with both errors accumulated
+```
+
+</Steps>
+
+## Interruption
+
+Fibers can be interrupted to cancel ongoing work:
+
+```typescript
+import { Effect, Fiber } from "effect"
+
+const program = Effect.gen(function* () {
+  const fiber = yield* Effect.fork(
+    Effect.gen(function* () {
+      yield* Effect.sleep("10 seconds")
+      console.log("This won't print")
+    })
+  )
+
+  yield* Effect.sleep("1 second")
+  yield* Fiber.interrupt(fiber)
+  console.log("Fiber interrupted")
+})
+
+Effect.runPromise(program)
+// Output (after 1 second):
+// Fiber interrupted
+```
+
+<Note>
+Interruption is cooperative. Effects can register cleanup logic using `onInterrupt` or `ensuring`.
+</Note>
+
+## Best Practices
+
+<Steps>
+
+### Use Structured Concurrency
+
+Forked fibers are automatically managed:
+
+```typescript
+import { Effect } from "effect"
+
+// ✅ Good: Fiber is child of parent scope
+const good = Effect.gen(function* () {
+  const fiber = yield* Effect.fork(task)
+  return yield* Fiber.join(fiber)
+})
+// Fiber is interrupted if parent is interrupted
+
+// ❌ Bad: Daemon outlives its scope
+const bad = Effect.gen(function* () {
+  yield* Effect.forkDaemon(task)
+  // Daemon keeps running even if this effect completes
+})
+```
+
+### Limit Concurrency for Resource-Intensive Tasks
+
+```typescript
+import { Effect } from "effect"
+
+// ❌ Bad: Can overwhelm resources
+const bad = Effect.all(
+  largeDataset.map(processItem),
+  { concurrency: "unbounded" }
+)
+
+// ✅ Good: Controlled concurrency
+const good = Effect.all(
+  largeDataset.map(processItem),
+  { concurrency: 10 }
+)
+```
+
+### Handle Interruption
+
+Always clean up resources when interrupted:
+
+```typescript
+import { Effect } from "effect"
+
+const withCleanup = Effect.gen(function* () {
+  const resource = yield* acquireResource()
+  yield* Effect.addFinalizer(() => releaseResource(resource))
+  return yield* useResource(resource)
+})
+// Finalizer runs even if interrupted
+```
+
+### Choose the Right Primitive
+
+- **fork**: When you need explicit control over the fiber
+- **race**: When you want the first success
+- **all (concurrent)**: When you need all results, run in parallel
+- **all (sequential)**: When effects must run in order
+
+</Steps>

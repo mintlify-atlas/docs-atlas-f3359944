@@ -1,0 +1,488 @@
+---
+title: 'Migrating from RxJS'
+description: 'Learn how to migrate RxJS Observables to Effect Stream'
+icon: 'arrow-right-arrow-left'
+---
+
+Effect Stream provides a more type-safe and composable alternative to RxJS Observables, with integrated error handling and resource management.
+
+## Key Differences
+
+| Feature | RxJS | Effect Stream |
+|---------|------|---------------|
+| Error handling | In-band (error channel) | Type-safe (error type parameter) |
+| Completion | Observable completes | Stream ends naturally |
+| Resources | `finalize` operator | `Effect.scoped` integration |
+| Context | No built-in DI | Built-in dependency injection |
+| Backpressure | Limited support | First-class support |
+
+## Basic Conversions
+
+### Creating Streams
+
+<CodeGroup>
+```typescript Before (RxJS)
+import { of, from, interval } from "rxjs"
+
+const simple$ = of(1, 2, 3)
+const fromArray$ = from([1, 2, 3])
+const timer$ = interval(1000)
+```
+
+```typescript After (Effect Stream)
+import { Stream, Schedule } from "effect"
+
+const simple = Stream.make(1, 2, 3)
+const fromArray = Stream.fromIterable([1, 2, 3])
+const timer = Stream.repeat(Schedule.spaced(Duration.seconds(1)))
+```
+</CodeGroup>
+
+### Operators - Map and Filter
+
+<CodeGroup>
+```typescript Before (RxJS)
+import { map, filter } from "rxjs/operators"
+
+const result$ = source$.pipe(
+  map(x => x * 2),
+  filter(x => x > 10)
+)
+```
+
+```typescript After (Effect Stream)
+const result = source.pipe(
+  Stream.map(x => x * 2),
+  Stream.filter(x => x > 10)
+)
+```
+</CodeGroup>
+
+### FlatMap / SwitchMap
+
+<CodeGroup>
+```typescript Before (RxJS)
+import { switchMap, mergeMap } from "rxjs/operators"
+
+const switched$ = source$.pipe(
+  switchMap(id => fetchUser(id))
+)
+
+const merged$ = source$.pipe(
+  mergeMap(id => fetchUser(id))
+)
+```
+
+```typescript After (Effect Stream)
+// switchMap equivalent - latest value only
+const switched = source.pipe(
+  Stream.mapEffect(id => fetchUser(id), { switch: true })
+)
+
+// mergeMap equivalent - all concurrent
+const merged = source.pipe(
+  Stream.mapEffect(id => fetchUser(id), { concurrency: "unbounded" })
+)
+```
+</CodeGroup>
+
+<Tip>
+Effect Stream's `mapEffect` gives you fine-grained concurrency control through options, rather than different operators.
+</Tip>
+
+### CombineLatest
+
+<CodeGroup>
+```typescript Before (RxJS)
+import { combineLatest } from "rxjs"
+
+const combined$ = combineLatest([
+  user$,
+  settings$,
+  notifications$
+]).pipe(
+  map(([user, settings, notifications]) => ({
+    user,
+    settings,
+    notifications
+  }))
+)
+```
+
+```typescript After (Effect Stream)
+const combined = Stream.combineLatest(user, settings, notifications).pipe(
+  Stream.map(([user, settings, notifications]) => ({
+    user,
+    settings,
+    notifications
+  }))
+)
+```
+</CodeGroup>
+
+### Error Handling
+
+<CodeGroup>
+```typescript Before (RxJS)
+import { catchError, retry } from "rxjs/operators"
+import { of } from "rxjs"
+
+const safe$ = source$.pipe(
+  catchError(error => {
+    console.error(error)
+    return of(defaultValue)
+  }),
+  retry(3)
+)
+```
+
+```typescript After (Effect Stream)
+const safe = source.pipe(
+  Stream.catchAll(error =>
+    Stream.succeed(defaultValue)
+  ),
+  Stream.retry(Schedule.recurs(3))
+)
+```
+</CodeGroup>
+
+<Warning>
+Unlike RxJS where errors terminate the stream, Effect Stream errors are typed and can be handled compositionally.
+</Warning>
+
+### Debounce and Throttle
+
+<CodeGroup>
+```typescript Before (RxJS)
+import { debounceTime, throttleTime } from "rxjs/operators"
+
+const debounced$ = input$.pipe(
+  debounceTime(300)
+)
+
+const throttled$ = input$.pipe(
+  throttleTime(1000)
+)
+```
+
+```typescript After (Effect Stream)
+import { Duration } from "effect"
+
+const debounced = input.pipe(
+  Stream.debounce(Duration.millis(300))
+)
+
+const throttled = input.pipe(
+  Stream.throttle({ duration: Duration.seconds(1), strategy: "enforce" })
+)
+```
+</CodeGroup>
+
+### Take and Skip
+
+<CodeGroup>
+```typescript Before (RxJS)
+import { take, skip, takeUntil, takeWhile } from "rxjs/operators"
+
+const limited$ = source$.pipe(
+  skip(5),
+  take(10),
+  takeWhile(x => x < 100)
+)
+```
+
+```typescript After (Effect Stream)
+const limited = source.pipe(
+  Stream.drop(5),
+  Stream.take(10),
+  Stream.takeWhile(x => x < 100)
+)
+```
+</CodeGroup>
+
+## Advanced Patterns
+
+### Subjects
+
+<CodeGroup>
+```typescript Before (RxJS)
+import { Subject, BehaviorSubject } from "rxjs"
+
+const subject = new Subject<number>()
+subject.next(1)
+subject.next(2)
+
+const behavior = new BehaviorSubject<number>(0)
+behavior.next(1)
+```
+
+```typescript After (Effect Stream)
+import { Queue, Ref } from "effect"
+
+// Regular Subject equivalent
+const makeSubject = <A>() =>
+  Effect.gen(function* () {
+    const queue = yield* Queue.unbounded<A>()
+    return {
+      next: (value: A) => Queue.offer(queue, value),
+      stream: Stream.fromQueue(queue)
+    }
+  })
+
+// BehaviorSubject equivalent
+const makeBehaviorSubject = <A>(initial: A) =>
+  Effect.gen(function* () {
+    const ref = yield* Ref.make(initial)
+    const queue = yield* Queue.unbounded<A>()
+    return {
+      next: (value: A) =>
+        Effect.zipRight(
+          Ref.set(ref, value),
+          Queue.offer(queue, value)
+        ),
+      stream: Stream.fromQueue(queue).pipe(
+        Stream.prepend(Stream.fromEffect(Ref.get(ref)))
+      )
+    }
+  })
+```
+</CodeGroup>
+
+### Scan (Reduce over time)
+
+<CodeGroup>
+```typescript Before (RxJS)
+import { scan } from "rxjs/operators"
+
+const running$ = clicks$.pipe(
+  scan((acc, click) => acc + 1, 0)
+)
+```
+
+```typescript After (Effect Stream)
+const running = clicks.pipe(
+  Stream.scan(0, (acc, click) => acc + 1)
+)
+```
+</CodeGroup>
+
+### Merge and Concat
+
+<CodeGroup>
+```typescript Before (RxJS)
+import { merge, concat } from "rxjs"
+
+const merged$ = merge(stream1$, stream2$, stream3$)
+const concatenated$ = concat(stream1$, stream2$, stream3$)
+```
+
+```typescript After (Effect Stream)
+const merged = Stream.mergeAll([stream1, stream2, stream3], {
+  concurrency: "unbounded"
+})
+const concatenated = Stream.concat(stream1, stream2, stream3)
+```
+</CodeGroup>
+
+### ShareReplay
+
+<CodeGroup>
+```typescript Before (RxJS)
+import { shareReplay } from "rxjs/operators"
+
+const shared$ = expensive$.pipe(
+  shareReplay(1)
+)
+```
+
+```typescript After (Effect Stream)
+const shared = expensive.pipe(
+  Stream.broadcast(1, 100), // buffer size, max subscribers
+  Effect.scoped
+)
+```
+</CodeGroup>
+
+<Warning>
+Effect's broadcast returns a scoped resource. You must use `Effect.scoped` to manage the lifecycle properly.
+</Warning>
+
+## Resource Management
+
+<CodeGroup>
+```typescript Before (RxJS)
+import { using, defer } from "rxjs"
+import { finalize } from "rxjs/operators"
+
+const stream$ = defer(() => {
+  const connection = createConnection()
+  return from(connection.data$).pipe(
+    finalize(() => connection.close())
+  )
+})
+```
+
+```typescript After (Effect Stream)
+const stream = Stream.acquireRelease(
+  Effect.sync(() => createConnection()),
+  (connection) => Effect.sync(() => connection.close())
+).pipe(
+  Stream.flatMap(connection =>
+    Stream.fromEffect(connection.getData())
+  )
+)
+```
+</CodeGroup>
+
+## Running Streams
+
+<CodeGroup>
+```typescript Before (RxJS)
+const subscription = stream$.subscribe({
+  next: value => console.log(value),
+  error: error => console.error(error),
+  complete: () => console.log("Complete")
+})
+
+subscription.unsubscribe()
+```
+
+```typescript After (Effect Stream)
+import { Runtime } from "effect"
+
+const program = stream.pipe(
+  Stream.runForEach(value => Effect.log(value))
+)
+
+const fiber = await Runtime.runFork(program)
+
+// Later, to cancel:
+await Fiber.interrupt(fiber)
+```
+</CodeGroup>
+
+## Common Stream Operations
+
+### Collect to Array
+
+<CodeGroup>
+```typescript Before (RxJS)
+import { toArray } from "rxjs/operators"
+
+const array$ = source$.pipe(toArray())
+```
+
+```typescript After (Effect Stream)
+const array = Stream.runCollect(source) // Effect<Chunk<A>, E>
+```
+</CodeGroup>
+
+### GroupBy
+
+<CodeGroup>
+```typescript Before (RxJS)
+import { groupBy, mergeMap, toArray } from "rxjs/operators"
+
+const grouped$ = source$.pipe(
+  groupBy(item => item.category),
+  mergeMap(group => group.pipe(toArray()))
+)
+```
+
+```typescript After (Effect Stream)
+const grouped = source.pipe(
+  Stream.groupBy(item => item.category),
+  Stream.flatMap(([key, stream]) =>
+    Stream.runCollect(stream).pipe(
+      Effect.map(chunk => [key, chunk] as const)
+    )
+  )
+)
+```
+</CodeGroup>
+
+### Distinct
+
+<CodeGroup>
+```typescript Before (RxJS)
+import { distinct, distinctUntilChanged } from "rxjs/operators"
+
+const unique$ = source$.pipe(
+  distinct()
+)
+
+const changed$ = source$.pipe(
+  distinctUntilChanged()
+)
+```
+
+```typescript After (Effect Stream)
+const unique = source.pipe(
+  Stream.changes // consecutive duplicates only
+)
+
+// For full distinct, collect to Set
+const fullyUnique = Effect.gen(function* () {
+  const seen = new Set<A>()
+  return source.pipe(
+    Stream.filter(value => {
+      if (seen.has(value)) return false
+      seen.add(value)
+      return true
+    })
+  )
+})
+```
+</CodeGroup>
+
+## Migration Strategy
+
+1. **Start with simple streams**: Convert basic Observables first
+2. **Use Stream.fromAsyncIterable**: Bridge from existing async iterables
+3. **Leverage Effect integration**: Streams work seamlessly with Effect
+4. **Type your errors**: Define error types for better type safety
+5. **Consider backpressure**: Effect Stream handles backpressure automatically
+
+<Tip>
+Effect Stream integrates with Effect's ecosystem. You can use services, layers, and scoped resources directly in streams.
+</Tip>
+
+## Testing
+
+<CodeGroup>
+```typescript Before (RxJS)
+import { TestScheduler } from "rxjs/testing"
+
+const scheduler = new TestScheduler((actual, expected) => {
+  expect(actual).toEqual(expected)
+})
+
+scheduler.run(({ cold, expectObservable }) => {
+  const source$ = cold('a-b-c|')
+  expectObservable(source$).toBe('a-b-c|')
+})
+```
+
+```typescript After (Effect Stream)
+import { it } from "@effect/vitest"
+import { TestClock, Chunk } from "effect"
+
+it.effect("stream emits values", () =>
+  Effect.gen(function* () {
+    const fiber = yield* Stream.make(1, 2, 3).pipe(
+      Stream.runCollect,
+      Effect.fork
+    )
+
+    const result = yield* Fiber.join(fiber)
+    assert.deepStrictEqual(Array.from(result), [1, 2, 3])
+  })
+)
+```
+</CodeGroup>
+
+## Next Steps
+
+- Learn about [Testing Strategies](/guides/best-practices/testing-strategies)
+- Explore [Project Structure](/guides/best-practices/project-structure)
+- Master [Performance Optimization](/guides/best-practices/performance-optimization)

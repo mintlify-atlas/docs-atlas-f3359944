@@ -1,0 +1,100 @@
+---
+title: Either
+description: API reference for the Either type - representing success or failure
+---
+
+The `Either` type represents a value that can be one of two types: `Right<A>` (success) or `Left<E>` (failure).
+
+## Type Definition
+
+```typescript
+type Either<E, A> = Left<E, A> | Right<E, A>
+```
+
+## Constructors
+
+### right
+
+Creates a successful `Either` containing a value.
+
+```typescript
+const right: <A>(value: A) => Either<never, A>
+```
+
+### left
+
+Creates a failed `Either` containing an error.
+
+```typescript
+const left: <E>(error: E) => Either<E, never>
+```
+
+### fromNullable
+
+Converts a nullable value to an `Either`.
+
+```typescript
+const fromNullable: <E>(onNullable: LazyArg<E>) => <A>(value: A | null | undefined) => Either<E, A>
+```
+
+### fromOption
+
+Converts an `Option` to an `Either`.
+
+```typescript
+const fromOption: <E>(onNone: LazyArg<E>) => <A>(self: Option<A>) => Either<E, A>
+```
+
+## Operations
+
+### map
+
+Transforms the success value.
+
+```typescript
+const map: <A, B>(f: (a: A) => B) => <E>(self: Either<E, A>) => Either<E, B>
+```
+
+### mapLeft
+
+Transforms the error value.
+
+```typescript
+const mapLeft: <E, G>(f: (e: E) => G) => <A>(self: Either<E, A>) => Either<G, A>
+```
+
+### flatMap
+
+Sequences computations that return `Either` values.
+
+```typescript
+const flatMap: <A, E2, B>(f: (a: A) => Either<E2, B>) => <E1>(self: Either<E1, A>) => Either<E1 | E2, B>
+```
+
+### match
+
+Pattern matches on an `Either`.
+
+```typescript
+const match: <E, B, A, C = B>(options: {
+  readonly onLeft: (e: E) => B
+  readonly onRight: (a: A) => C
+}) => (self: Either<E, A>) => B | C
+```
+
+## Example
+
+```typescript
+import { Either } from "effect"
+
+const parse = (input: string): Either.Either<string, number> => {
+  const n = parseInt(input)
+  return isNaN(n) ? Either.left("Invalid number") : Either.right(n)
+}
+
+const result = parse("42").pipe(
+  Either.map(n => n * 2),
+  Either.getOrElse(() => 0)
+)
+console.log(result) // 84
+```

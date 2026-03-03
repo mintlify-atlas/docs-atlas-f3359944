@@ -1,122 +1,200 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "Effect",
+  "theme": "palm",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#7c3aed",
+    "light": "#a78bfa",
+    "dark": "#5b21b6"
   },
   "favicon": "/favicon.svg",
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/Effect-TS/effect"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/Effect-TS/effect",
+      "discord": "https://discord.gg/hdt7t7jpvn",
+      "x": "https://twitter.com/EffectTS_"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Getting Started",
             "pages": [
-              "index",
+              "introduction",
               "quickstart",
-              "development"
+              "installation"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Core Concepts",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "core/effect-type",
+              "core/creating-effects",
+              "core/running-effects",
+              "core/error-handling",
+              "core/context-management",
+              "core/concurrency",
+              "core/resource-management"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "Essential Modules",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
+              "modules/effect",
+              "modules/option",
+              "modules/either",
+              "modules/array",
+              "modules/stream",
+              "modules/fiber",
+              "modules/ref",
+              "modules/deferred",
+              "modules/queue",
+              "modules/schedule"
             ]
           },
           {
-            "group": "AI tools",
+            "group": "Advanced Topics",
             "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "advanced/layers",
+              "advanced/testing",
+              "advanced/observability",
+              "advanced/schema",
+              "advanced/interruption",
+              "advanced/custom-effects"
+            ]
+          },
+          {
+            "group": "Ecosystem",
+            "pages": [
+              "ecosystem/platform",
+              "ecosystem/cli",
+              "ecosystem/sql",
+              "ecosystem/rpc",
+              "ecosystem/opentelemetry",
+              "ecosystem/cluster",
+              "ecosystem/ai"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "API Reference",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Core",
             "pages": [
-              "api-reference/introduction"
+              "api/effect",
+              "api/cause",
+              "api/context",
+              "api/exit",
+              "api/runtime",
+              "api/scope"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "Data Types",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "api/option",
+              "api/either",
+              "api/array",
+              "api/chunk",
+              "api/hashmap",
+              "api/hashset",
+              "api/list",
+              "api/redblacktree"
+            ]
+          },
+          {
+            "group": "Concurrency",
+            "pages": [
+              "api/fiber",
+              "api/fiberref",
+              "api/deferred",
+              "api/ref",
+              "api/semaphore",
+              "api/queue",
+              "api/pool"
+            ]
+          },
+          {
+            "group": "Streaming",
+            "pages": [
+              "api/stream",
+              "api/sink",
+              "api/channel",
+              "api/subscription"
+            ]
+          },
+          {
+            "group": "Scheduling",
+            "pages": [
+              "api/schedule",
+              "api/clock",
+              "api/duration",
+              "api/datetime",
+              "api/cron"
+            ]
+          },
+          {
+            "group": "Schema & Validation",
+            "pages": [
+              "api/schema",
+              "api/brand",
+              "api/predicate"
+            ]
+          },
+          {
+            "group": "Platform",
+            "pages": [
+              "api/platform/http",
+              "api/platform/filesystem",
+              "api/platform/command",
+              "api/platform/worker"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Guides",
+        "groups": [
+          {
+            "group": "Tutorials",
+            "pages": [
+              "guides/building-http-server",
+              "guides/database-integration",
+              "guides/cli-application",
+              "guides/error-handling-patterns",
+              "guides/streaming-data"
+            ]
+          },
+          {
+            "group": "Migration",
+            "pages": [
+              "guides/migration/from-promises",
+              "guides/migration/from-rxjs",
+              "guides/migration/v2-to-v3"
+            ]
+          },
+          {
+            "group": "Best Practices",
+            "pages": [
+              "guides/best-practices/project-structure",
+              "guides/best-practices/testing-strategies",
+              "guides/best-practices/performance-optimization",
+              "guides/best-practices/type-safety"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

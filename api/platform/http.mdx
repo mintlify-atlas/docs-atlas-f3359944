@@ -1,0 +1,375 @@
+---
+title: HttpClient & HttpServer
+description: HTTP client and server from @effect/platform
+---
+
+`@effect/platform` provides `HttpClient` for making HTTP requests and `HttpServer` for creating HTTP servers.
+
+## HttpClient
+
+### Overview
+
+```ts
+import { HttpClient } from "@effect/platform"
+
+interface HttpClient extends HttpClient.With<HttpClientError> {}
+
+interface With<E, R = never> {
+  readonly execute: (
+    request: HttpClientRequest
+  ) => Effect<HttpClientResponse, E, R>
+
+  readonly get: (
+    url: string | URL,
+    options?: Options.NoBody
+  ) => Effect<HttpClientResponse, E, R>
+
+  readonly post: (
+    url: string | URL,
+    options?: Options.NoUrl
+  ) => Effect<HttpClientResponse, E, R>
+
+  readonly put: (url: string | URL, options?: Options.NoUrl) => Effect<HttpClientResponse, E, R>
+  readonly patch: (url: string | URL, options?: Options.NoUrl) => Effect<HttpClientResponse, E, R>
+  readonly del: (url: string | URL, options?: Options.NoUrl) => Effect<HttpClientResponse, E, R>
+  readonly head: (url: string | URL, options?: Options.NoBody) => Effect<HttpClientResponse, E, R>
+  readonly options: (url: string | URL, options?: Options.NoUrl) => Effect<HttpClientResponse, E, R>
+}
+```
+
+### Basic Usage
+
+```ts
+import { Effect, HttpClient } from "effect"
+
+const program = Effect.gen(function* () {
+  const client = yield* HttpClient.HttpClient
+
+  const response = yield* client.get("https://api.example.com/users")
+
+  const json = yield* response.json
+  return json
+})
+```
+
+### HTTP Methods
+
+#### GET
+
+```ts
+const get: (
+  url: string | URL,
+  options?: Options.NoBody
+) => Effect<HttpClientResponse, HttpClientError, HttpClient>
+```
+
+```ts
+import { Effect, HttpClient } from "effect"
+
+const getData = HttpClient.get("https://api.example.com/data")
+```
+
+#### POST
+
+```ts
+const post: (
+  url: string | URL,
+  options?: Options.NoUrl
+) => Effect<HttpClientResponse, HttpClientError, HttpClient>
+```
+
+```ts
+import { Effect, HttpClient, HttpClientRequest } from "effect"
+
+const postData = HttpClient.post(
+  "https://api.example.com/users",
+  {
+    body: HttpClientRequest.jsonBody({ name: "Alice", age: 30 })
+  }
+)
+```
+
+#### PUT, PATCH, DELETE
+
+```ts
+import { HttpClient } from "effect"
+
+const updateUser = HttpClient.put(
+  "https://api.example.com/users/123",
+  { body: HttpClientRequest.jsonBody({ name: "Bob" }) }
+)
+
+const patchUser = HttpClient.patch(
+  "https://api.example.com/users/123",
+  { body: HttpClientRequest.jsonBody({ age: 31 }) }
+)
+
+const deleteUser = HttpClient.del("https://api.example.com/users/123")
+```
+
+### Request Transformation
+
+#### mapRequest
+
+Transform requests before sending.
+
+```ts
+const mapRequest: {
+  (
+    f: (a: HttpClientRequest) => HttpClientRequest
+  ): <E, R>(self: HttpClient.With<E, R>) => HttpClient.With<E, R>
+}
+```
+
+```ts
+import { HttpClient } from "effect"
+
+const clientWithAuth = HttpClient.mapRequest(
+  HttpClient.HttpClient,
+  (req) => req.pipe(
+    HttpClientRequest.setHeader("Authorization", "Bearer token")
+  )
+)
+```
+
+#### mapRequestEffect
+
+Effectful request transformation.
+
+```ts
+const mapRequestEffect: {
+  <E2, R2>(
+    f: (a: HttpClientRequest) => Effect<HttpClientRequest, E2, R2>
+  ): <E, R>(self: HttpClient.With<E, R>) => HttpClient.With<E | E2, R | R2>
+}
+```
+
+### Response Filtering
+
+#### filterStatusOk
+
+Fail on non-2xx status codes.
+
+```ts
+const filterStatusOk: <E, R>(
+  self: HttpClient.With<E, R>
+) => HttpClient.With<E | ResponseError, R>
+```
+
+```ts
+import { HttpClient } from "effect"
+
+const client = HttpClient.filterStatusOk(HttpClient.HttpClient)
+
+// Will fail with ResponseError if status is not 2xx
+const program = client.get("https://api.example.com/data")
+```
+
+#### filterStatus
+
+Custom status filtering.
+
+```ts
+const filterStatus: {
+  (f: (status: number) => boolean): <E, R>(
+    self: HttpClient.With<E, R>
+  ) => HttpClient.With<E | ResponseError, R>
+}
+```
+
+```ts
+import { HttpClient } from "effect"
+
+const client = HttpClient.filterStatus(
+  HttpClient.HttpClient,
+  (status) => status < 400
+)
+```
+
+### Error Handling
+
+#### catchAll
+
+```ts
+const catchAll: {
+  <E, E2, R2>(
+    f: (e: E) => Effect<HttpClientResponse, E2, R2>
+  ): <R>(self: HttpClient.With<E, R>) => HttpClient.With<E2, R2 | R>
+}
+```
+
+#### catchTag
+
+Handle specific error types.
+
+```ts
+const catchTag: {
+  <K extends E extends { _tag: string } ? E["_tag"] : never, E, E1, R1>(
+    tag: K,
+    f: (e: Extract<E, { _tag: K }>) => Effect<HttpClientResponse, E1, R1>
+  ): <R>(self: HttpClient.With<E, R>) => HttpClient.With<E1 | Exclude<E, { _tag: K }>, R1 | R>
+}
+```
+
+### Retries
+
+```ts
+import { HttpClient, Schedule } from "effect"
+
+const clientWithRetry = HttpClient.retry(
+  HttpClient.HttpClient,
+  {
+    schedule: Schedule.exponential("100 millis"),
+    times: 3
+  }
+)
+```
+
+## HttpServer
+
+### Overview
+
+```ts
+interface HttpServer {
+  readonly serve: {
+    <E, R>(httpApp: App.Default<E, R>): Effect<
+      void,
+      never,
+      Exclude<R, HttpServerRequest> | Scope
+    >
+  }
+  readonly address: Address
+}
+
+type Address = TcpAddress | UnixAddress
+
+interface TcpAddress {
+  readonly _tag: "TcpAddress"
+  readonly hostname: string
+  readonly port: number
+}
+
+interface UnixAddress {
+  readonly _tag: "UnixAddress"
+  readonly path: string
+}
+```
+
+### Creating a Server
+
+```ts
+import { HttpServer, HttpServerResponse, HttpRouter } from "@effect/platform"
+import { Effect, Layer } from "effect"
+
+const router = HttpRouter.empty.pipe(
+  HttpRouter.get("/users", Effect.succeed(
+    HttpServerResponse.json([{ id: 1, name: "Alice" }])
+  ))
+)
+
+const server = HttpServer.serve(router)
+```
+
+### serve
+
+Serve an HTTP application.
+
+```ts
+const serve: {
+  <E, R>(httpApp: App.Default<E, R>): Layer<
+    never,
+    never,
+    HttpServer | Exclude<R, HttpServerRequest | Scope>
+  >
+}
+```
+
+```ts
+import { HttpServer, HttpRouter, HttpServerResponse } from "@effect/platform"
+import { Effect, Layer } from "effect"
+
+const router = HttpRouter.empty.pipe(
+  HttpRouter.get("/", Effect.succeed(
+    HttpServerResponse.text("Hello, World!")
+  ))
+)
+
+const ServerLive = HttpServer.serve(router)
+```
+
+### serveEffect
+
+Serve as an Effect.
+
+```ts
+const serveEffect: {
+  <E, R>(httpApp: App.Default<E, R>): Effect<
+    void,
+    never,
+    Scope | HttpServer | Exclude<R, HttpServerRequest>
+  >
+}
+```
+
+### Address Utilities
+
+#### addressWith
+
+Access server address.
+
+```ts
+const addressWith: <A, E, R>(
+  effect: (address: Address) => Effect<A, E, R>
+) => Effect<A, E, HttpServer | R>
+```
+
+```ts
+import { HttpServer, Effect } from "effect"
+
+const program = HttpServer.addressWith((address) =>
+  Effect.gen(function* () {
+    if (address._tag === "TcpAddress") {
+      console.log(`Server running on ${address.hostname}:${address.port}`)
+    }
+  })
+)
+```
+
+#### formatAddress
+
+```ts
+const formatAddress: (address: Address) => string
+```
+
+#### logAddress
+
+Log the server address.
+
+```ts
+const logAddress: Effect<void, never, HttpServer>
+```
+
+### Test Client
+
+#### layerTestClient
+
+Create a test client for the server.
+
+```ts
+const layerTestClient: Layer<HttpClient, never, HttpClient | HttpServer>
+```
+
+```ts
+import { HttpServer, HttpClient } from "@effect/platform"
+import { Effect, Layer } from "effect"
+
+const TestClientLive = HttpServer.layerTestClient
+
+const program = Effect.gen(function* () {
+  const client = yield* HttpClient.HttpClient
+  const response = yield* client.get("/api/users")
+  return yield* response.json
+}).pipe(
+  Effect.provide(TestClientLive)
+)
+```

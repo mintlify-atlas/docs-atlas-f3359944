@@ -1,0 +1,70 @@
+---
+title: Array
+description: API reference for functional array operations
+---
+
+Functional utilities for working with arrays in a type-safe way.
+
+## Operations
+
+### map
+
+Transforms each element of an array.
+
+```typescript
+const map: <A, B>(f: (a: A, i: number) => B) => (self: ReadonlyArray<A>) => Array<B>
+```
+
+### filter
+
+Filters an array based on a predicate.
+
+```typescript
+const filter: <A>(predicate: Predicate<A>) => (self: ReadonlyArray<A>) => Array<A>
+```
+
+### flatMap
+
+Maps and flattens an array.
+
+```typescript
+const flatMap: <A, B>(f: (a: A, i: number) => ReadonlyArray<B>) => (self: ReadonlyArray<A>) => Array<B>
+```
+
+### reduce
+
+Reduces an array to a single value.
+
+```typescript
+const reduce: <B, A>(b: B, f: (b: B, a: A, i: number) => B) => (self: ReadonlyArray<A>) => B
+```
+
+### partition
+
+Partitions an array based on a predicate.
+
+```typescript
+const partition: <A>(predicate: Predicate<A>) => (self: ReadonlyArray<A>) => [excluded: Array<A>, satisfying: Array<A>]
+```
+
+### groupBy
+
+Groups array elements by a key function.
+
+```typescript
+const groupBy: <A, K extends string | symbol>(f: (a: A) => K) => (self: ReadonlyArray<A>) => Record<K, Array<A>>
+```
+
+## Example
+
+```typescript
+import { Array } from "effect"
+
+const numbers = [1, 2, 3, 4, 5]
+
+const result = numbers.pipe(
+  Array.filter(n => n % 2 === 0),
+  Array.map(n => n * 2)
+)
+console.log(result) // [4, 8]
+```

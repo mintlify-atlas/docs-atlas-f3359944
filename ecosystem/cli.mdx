@@ -1,0 +1,199 @@
+---
+title: "@effect/cli"
+description: "Build powerful command-line applications with Effect"
+---
+
+`@effect/cli` is a framework for building scalable, type-safe command-line applications in TypeScript. It provides declarative APIs for commands, arguments, options, and includes built-in features like help generation, shell completions, and wizard mode.
+
+## Installation
+
+<CodeGroup>
+```bash npm
+npm install @effect/cli @effect/platform-node
+```
+
+```bash pnpm
+pnpm add @effect/cli @effect/platform-node
+```
+
+```bash yarn
+yarn add @effect/cli @effect/platform-node
+```
+</CodeGroup>
+
+## Quick Start
+
+Create a simple "Hello World" CLI:
+
+```ts
+import { Command } from "@effect/cli"
+import { NodeContext, NodeRuntime } from "@effect/platform-node"
+import { Console, Effect } from "effect"
+
+const command = Command.make("hello-world", {}, () =>
+  Console.log("Hello World")
+)
+
+const cli = Command.run(command, {
+  name: "Hello World CLI",
+  version: "v1.0.0"
+})
+
+cli(process.argv).pipe(
+  Effect.provide(NodeContext.layer),
+  NodeRuntime.runMain
+)
+```
+
+Run it:
+
+```bash
+npx tsx hello-world.ts
+# Output: Hello World
+```
+
+## Key Features
+
+### Built-In Options
+
+Every CLI gets these options automatically:
+
+- `--help` / `-h` - Show documentation
+- `--version` - Display version
+- `--completions` - Generate shell completions (bash, zsh, fish, sh)
+- `--wizard` - Interactive command builder
+- `--log-level` - Set logging verbosity
+
+### Arguments
+
+Define positional arguments:
+
+```ts
+import { Args, Command } from "@effect/cli"
+import { Console } from "effect"
+
+const text = Args.text({ name: "message" })
+
+const command = Command.make("echo", { text }, ({ text }) =>
+  Console.log(text)
+)
+```
+
+### Options
+
+Add flags and valued options:
+
+```ts
+import { Args, Command, Options } from "@effect/cli"
+import { Console } from "effect"
+
+const text = Args.text({ name: "message" })
+const bold = Options.boolean("bold").pipe(Options.withAlias("b"))
+const color = Options.choice("color", ["red", "green", "blue"]).pipe(
+  Options.withAlias("c"),
+  Options.optional
+)
+
+const command = Command.make(
+  "echo",
+  { text, bold, color },
+  ({ text, bold, color }) => {
+    let output = text
+    if (bold) output = `\x1b[1m${output}\x1b[0m`
+    return Console.log(output)
+  }
+)
+```
+
+### Subcommands
+
+Organize functionality into nested commands:
+
+```ts
+import { Command } from "@effect/cli"
+
+const add = Command.make("add", { /* ... */ }, (config) => /* ... */)
+const clone = Command.make("clone", { /* ... */ }, (config) => /* ... */)
+
+const git = Command.make("git", {}, () => /* ... */)
+  .pipe(Command.withSubcommands([add, clone]))
+```
+
+## Example: Git-Style CLI
+
+Create a mini-git with multiple subcommands:
+
+```ts
+import { Args, Command, Options } from "@effect/cli"
+import { NodeContext, NodeRuntime } from "@effect/platform-node"
+import { Console, Effect } from "effect"
+
+const configs = Options.keyValueMap("c").pipe(Options.optional)
+
+const minigit = Command.make("minigit", { configs }, ({ configs }) =>
+  Console.log("Running minigit")
+)
+
+const pathspec = Args.text({ name: "pathspec" }).pipe(Args.repeated)
+const verbose = Options.boolean("verbose").pipe(Options.withAlias("v"))
+
+const add = Command.make("add", { pathspec, verbose }, ({ pathspec, verbose }) =>
+  Console.log(`Adding files: ${pathspec.join(", ")}`)  
+)
+
+const repository = Args.text({ name: "repository" })
+const depth = Options.integer("depth").pipe(Options.optional)
+
+const clone = Command.make("clone", { repository, depth }, ({ repository }) =>
+  Console.log(`Cloning ${repository}`)
+)
+
+const command = minigit.pipe(
+  Command.withSubcommands([add, clone])
+)
+
+const cli = Command.run(command, {
+  name: "Minigit",
+  version: "v1.0.0"
+})
+
+cli(process.argv).pipe(
+  Effect.provide(NodeContext.layer),
+  NodeRuntime.runMain
+)
+```
+
+## Wizard Mode
+
+Guide users through command construction interactively:
+
+```bash
+npx tsx minigit.ts --wizard
+# Interactive prompts will guide the user
+```
+
+## Shell Completions
+
+Generate completions for your shell:
+
+```bash
+# Bash
+source <(your-cli --completions bash)
+
+# Zsh  
+source <(your-cli --completions zsh)
+
+# Fish
+your-cli --completions fish | source
+```
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="API Reference" href="https://effect-ts.github.io/effect/docs/cli">
+    Complete API documentation
+  </Card>
+  <Card title="@effect/platform-node" href="/ecosystem/platform">
+    Required for Node.js runtime
+  </Card>
+</CardGroup>

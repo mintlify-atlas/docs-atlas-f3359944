@@ -1,0 +1,446 @@
+---
+title: Runtime
+description: Runtime.make, Runtime.runPromise, and execution APIs
+---
+
+The `Runtime` module provides the execution environment for Effect workflows. A `Runtime<R>` contains all the services and configuration needed to run effects.
+
+## Type
+
+```ts
+interface Runtime<in R>
+```
+
+A runtime encapsulates everything needed to execute effects.
+
+<ParamField path="R" type="type parameter">
+  The environment type that this runtime provides
+</ParamField>
+
+<ResponseField name="context" type="Context.Context<R>">
+  The context used as initial for forks
+</ResponseField>
+
+<ResponseField name="runtimeFlags" type="RuntimeFlags.RuntimeFlags">
+  The runtime flags used as initial for forks
+</ResponseField>
+
+<ResponseField name="fiberRefs" type="FiberRefs.FiberRefs">
+  The fiber references used as initial for forks
+</ResponseField>
+
+## Constructors
+
+### make
+
+Creates a new Runtime.
+
+```ts
+const make: <R>(options: {
+  readonly context: Context.Context<R>
+  readonly runtimeFlags: RuntimeFlags.RuntimeFlags
+  readonly fiberRefs: FiberRefs.FiberRefs
+}) => Runtime<R>
+```
+
+<ParamField path="options.context" type="Context.Context<R>" required>
+  The service context
+</ParamField>
+
+<ParamField path="options.runtimeFlags" type="RuntimeFlags.RuntimeFlags" required>
+  The runtime flags configuration
+</ParamField>
+
+<ParamField path="options.fiberRefs" type="FiberRefs.FiberRefs" required>
+  The fiber references
+</ParamField>
+
+<ResponseField name="return" type="Runtime<R>">
+  A new runtime instance
+</ResponseField>
+
+```ts
+import { Runtime, Context, FiberRefs } from "effect"
+
+const runtime = Runtime.make({
+  context: Context.empty(),
+  runtimeFlags: Runtime.defaultRuntimeFlags,
+  fiberRefs: FiberRefs.empty()
+})
+```
+
+### defaultRuntime
+
+The default runtime with no services.
+
+```ts
+const defaultRuntime: Runtime<never>
+```
+
+<ResponseField name="return" type="Runtime<never>">
+  A runtime with empty context
+</ResponseField>
+
+```ts
+import { Runtime, Effect } from "effect"
+
+Runtime.runSync(Runtime.defaultRuntime)(Effect.succeed(42))
+// 42
+```
+
+## Execution
+
+### runSync
+
+Executes an effect synchronously, throwing on errors or async boundaries.
+
+```ts
+const runSync: {
+  <A, E, R>(runtime: Runtime<R>, effect: Effect.Effect<A, E, R>): A
+  <R>(runtime: Runtime<R>): <A, E>(effect: Effect.Effect<A, E, R>) => A
+}
+```
+
+<ParamField path="runtime" type="Runtime<R>" required>
+  The runtime to use
+</ParamField>
+
+<ParamField path="effect" type="Effect.Effect<A, E, R>" required>
+  The effect to execute
+</ParamField>
+
+<ResponseField name="return" type="A">
+  The success value (throws on error)
+</ResponseField>
+
+```ts
+import { Runtime, Effect } from "effect"
+
+const result = Runtime.runSync(Runtime.defaultRuntime)(
+  Effect.succeed(42)
+)
+// 42
+```
+
+<Note>
+  This method should only be used at the edges of your program. It throws exceptions for errors and async operations.
+</Note>
+
+### runSyncExit
+
+Executes an effect synchronously, returning an Exit.
+
+```ts
+const runSyncExit: {
+  <A, E, R>(runtime: Runtime<R>, effect: Effect.Effect<A, E, R>): Exit.Exit<A, E>
+  <R>(runtime: Runtime<R>): <A, E>(effect: Effect.Effect<A, E, R>) => Exit.Exit<A, E>
+}
+```
+
+<ParamField path="runtime" type="Runtime<R>" required>
+  The runtime to use
+</ParamField>
+
+<ParamField path="effect" type="Effect.Effect<A, E, R>" required>
+  The effect to execute
+</ParamField>
+
+<ResponseField name="return" type="Exit.Exit<A, E>">
+  The Exit result
+</ResponseField>
+
+```ts
+import { Runtime, Effect, Exit } from "effect"
+
+const exit = Runtime.runSyncExit(Runtime.defaultRuntime)(
+  Effect.fail("error")
+)
+// Exit.fail("error")
+```
+
+### runPromise
+
+Runs an Effect and returns a Promise that resolves with the value or rejects with the error.
+
+```ts
+const runPromise: {
+  <R>(runtime: Runtime<R>): <A, E>(
+    effect: Effect.Effect<A, E, R>,
+    options?: { readonly signal?: AbortSignal }
+  ) => Promise<A>
+  <R, A, E>(runtime: Runtime<R>, effect: Effect.Effect<A, E, R>, options?: {
+    readonly signal?: AbortSignal
+  }): Promise<A>
+}
+```
+
+<ParamField path="runtime" type="Runtime<R>" required>
+  The runtime to use
+</ParamField>
+
+<ParamField path="effect" type="Effect.Effect<A, E, R>" required>
+  The effect to execute
+</ParamField>
+
+<ParamField path="options.signal" type="AbortSignal">
+  Optional abort signal for cancellation
+</ParamField>
+
+<ResponseField name="return" type="Promise<A>">
+  A promise that resolves to the success value
+</ResponseField>
+
+```ts
+import { Runtime, Effect } from "effect"
+
+const program = Effect.gen(function* () {
+  const a = yield* Effect.succeed(1)
+  const b = yield* Effect.succeed(2)
+  return a + b
+})
+
+Runtime.runPromise(Runtime.defaultRuntime)(program).then(console.log)
+// 3
+```
+
+<Note>
+  This method should only be used at the edges of your program. The promise will reject if the effect fails.
+</Note>
+
+### runPromiseExit
+
+Runs an Effect and returns a Promise that resolves with the Exit state.
+
+```ts
+const runPromiseExit: {
+  <R>(runtime: Runtime<R>): <A, E>(
+    effect: Effect.Effect<A, E, R>,
+    options?: { readonly signal?: AbortSignal }
+  ) => Promise<Exit.Exit<A, E>>
+  <R, A, E>(runtime: Runtime<R>, effect: Effect.Effect<A, E, R>, options?: {
+    readonly signal?: AbortSignal
+  }): Promise<Exit.Exit<A, E>>
+}
+```
+
+<ParamField path="runtime" type="Runtime<R>" required>
+  The runtime to use
+</ParamField>
+
+<ParamField path="effect" type="Effect.Effect<A, E, R>" required>
+  The effect to execute
+</ParamField>
+
+<ResponseField name="return" type="Promise<Exit.Exit<A, E>>">
+  A promise that always resolves with an Exit
+</ResponseField>
+
+```ts
+import { Runtime, Effect, Exit } from "effect"
+
+Runtime.runPromiseExit(Runtime.defaultRuntime)(
+  Effect.fail("error")
+).then(console.log)
+// Exit.fail("error")
+```
+
+### runFork
+
+Executes an effect and returns a RuntimeFiber.
+
+```ts
+const runFork: {
+  <R>(runtime: Runtime<R>): <A, E>(
+    effect: Effect.Effect<A, E, R>,
+    options?: RunForkOptions
+  ) => Fiber.RuntimeFiber<A, E>
+  <R, A, E>(runtime: Runtime<R>, effect: Effect.Effect<A, E, R>, options?: RunForkOptions): Fiber.RuntimeFiber<A, E>
+}
+```
+
+<ParamField path="runtime" type="Runtime<R>" required>
+  The runtime to use
+</ParamField>
+
+<ParamField path="effect" type="Effect.Effect<A, E, R>" required>
+  The effect to execute
+</ParamField>
+
+<ParamField path="options.scheduler" type="Scheduler">
+  Custom scheduler to use
+</ParamField>
+
+<ResponseField name="return" type="Fiber.RuntimeFiber<A, E>">
+  A handle to the running fiber
+</ResponseField>
+
+```ts
+import { Runtime, Effect } from "effect"
+
+const fiber = Runtime.runFork(Runtime.defaultRuntime)(
+  Effect.sleep("1 second").pipe(Effect.andThen(Effect.succeed(42)))
+)
+
+// Later: await fiber for result
+```
+
+### runCallback
+
+Executes an effect asynchronously, calling a callback with the exit value.
+
+```ts
+const runCallback: {
+  <R>(runtime: Runtime<R>): <A, E>(
+    effect: Effect.Effect<A, E, R>,
+    options?: RunCallbackOptions<A, E>
+  ) => Cancel<A, E>
+  <R, A, E>(runtime: Runtime<R>, effect: Effect.Effect<A, E, R>, options?: RunCallbackOptions<A, E>): Cancel<A, E>
+}
+```
+
+<ParamField path="runtime" type="Runtime<R>" required>
+  The runtime to use
+</ParamField>
+
+<ParamField path="effect" type="Effect.Effect<A, E, R>" required>
+  The effect to execute
+</ParamField>
+
+<ParamField path="options.onExit" type="(exit: Exit.Exit<A, E>) => void">
+  Callback invoked with the result
+</ParamField>
+
+<ResponseField name="return" type="Cancel<A, E>">
+  A function to cancel the execution
+</ResponseField>
+
+## Context Operations
+
+### provideService
+
+Adds a service to the runtime's context.
+
+```ts
+const provideService: {
+  <I, S>(tag: Context.Tag<I, S>, service: S): <R>(self: Runtime<R>) => Runtime<I | R>
+  <R, I, S>(self: Runtime<R>, tag: Context.Tag<I, S>, service: S): Runtime<R | I>
+}
+```
+
+<ParamField path="self" type="Runtime<R>" required>
+  The runtime to extend
+</ParamField>
+
+<ParamField path="tag" type="Context.Tag<I, S>" required>
+  The service tag
+</ParamField>
+
+<ParamField path="service" type="S" required>
+  The service implementation
+</ParamField>
+
+<ResponseField name="return" type="Runtime<R | I>">
+  A new runtime with the added service
+</ResponseField>
+
+```ts
+import { Runtime, Context } from "effect"
+
+class Logger extends Context.Tag("Logger")<Logger, {
+  log: (message: string) => void
+}>() {}
+
+const runtime = Runtime.defaultRuntime.pipe(
+  Runtime.provideService(Logger, {
+    log: (msg) => console.log(msg)
+  })
+)
+```
+
+### updateContext
+
+Updates the runtime's context.
+
+```ts
+const updateContext: {
+  <R, R2>(f: (context: Context.Context<R>) => Context.Context<R2>): (self: Runtime<R>) => Runtime<R2>
+  <R, R2>(self: Runtime<R>, f: (context: Context.Context<R>) => Context.Context<R2>): Runtime<R2>
+}
+```
+
+## Fiber Refs
+
+### setFiberRef
+
+Sets a fiber reference in the runtime.
+
+```ts
+const setFiberRef: {
+  <A>(fiberRef: FiberRef.FiberRef<A>, value: A): <R>(self: Runtime<R>) => Runtime<R>
+  <R, A>(self: Runtime<R>, fiberRef: FiberRef.FiberRef<A>, value: A): Runtime<R>
+}
+```
+
+<ParamField path="self" type="Runtime<R>" required>
+  The runtime to modify
+</ParamField>
+
+<ParamField path="fiberRef" type="FiberRef.FiberRef<A>" required>
+  The fiber reference to set
+</ParamField>
+
+<ParamField path="value" type="A" required>
+  The value to set
+</ParamField>
+
+<ResponseField name="return" type="Runtime<R>">
+  A new runtime with the updated fiber ref
+</ResponseField>
+
+```ts
+import { Runtime, FiberRef, Effect } from "effect"
+
+const ref = FiberRef.unsafeMake(0)
+
+const runtime = Runtime.defaultRuntime.pipe(
+  Runtime.setFiberRef(ref, 42)
+)
+
+const value = Runtime.runSync(runtime)(FiberRef.get(ref))
+// 42
+```
+
+## Runtime Flags
+
+### updateRuntimeFlags
+
+Updates the runtime flags.
+
+```ts
+const updateRuntimeFlags: {
+  (f: (flags: RuntimeFlags.RuntimeFlags) => RuntimeFlags.RuntimeFlags): <R>(self: Runtime<R>) => Runtime<R>
+  <R>(self: Runtime<R>, f: (flags: RuntimeFlags.RuntimeFlags) => RuntimeFlags.RuntimeFlags): Runtime<R>
+}
+```
+
+### enableRuntimeFlag
+
+Enables a specific runtime flag.
+
+```ts
+const enableRuntimeFlag: {
+  (flag: RuntimeFlags.RuntimeFlag): <R>(self: Runtime<R>) => Runtime<R>
+  <R>(self: Runtime<R>, flag: RuntimeFlags.RuntimeFlag): Runtime<R>
+}
+```
+
+### disableRuntimeFlag
+
+Disables a specific runtime flag.
+
+```ts
+const disableRuntimeFlag: {
+  (flag: RuntimeFlags.RuntimeFlag): <R>(self: Runtime<R>) => Runtime<R>
+  <R>(self: Runtime<R>, flag: RuntimeFlags.RuntimeFlag): Runtime<R>
+}
+```

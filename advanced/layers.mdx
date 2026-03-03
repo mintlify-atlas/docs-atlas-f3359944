@@ -1,0 +1,237 @@
+---
+title: Layers
+description: Master Effect's dependency injection with Layers for composable service management
+---
+
+Layers provide a powerful dependency injection mechanism in Effect. They allow you to construct services and manage their lifecycles in a composable way.
+
+## Creating Layers
+
+### Layer.succeed
+
+Create a layer from a simple value:
+
+```typescript
+import { Context, Layer } from "effect"
+
+class Database extends Context.Tag("Database")<
+  Database,
+  { query: (sql: string) => Promise<unknown> }
+>() {}
+
+const DatabaseLive = Layer.succeed(
+  Database,
+  {
+    query: (sql: string) => Promise.resolve({ result: sql })
+  }
+)
+```
+
+### Layer.effect
+
+Create a layer from an effectful computation:
+
+```typescript
+import { Context, Effect, Layer } from "effect"
+
+class Config extends Context.Tag("Config")<
+  Config,
+  { apiUrl: string }
+>() {}
+
+const ConfigLive = Layer.effect(
+  Config,
+  Effect.gen(function*() {
+    const apiUrl = yield* Effect.sync(() => process.env.API_URL ?? "http://localhost:3000")
+    return { apiUrl }
+  })
+)
+```
+
+### Layer.scoped
+
+Create a layer with resource acquisition and cleanup:
+
+```typescript
+import { Context, Effect, Layer } from "effect"
+
+class DatabaseConnection extends Context.Tag("DatabaseConnection")<
+  DatabaseConnection,
+  { connection: unknown }
+>() {}
+
+const DatabaseConnectionLive = Layer.scoped(
+  DatabaseConnection,
+  Effect.acquireRelease(
+    Effect.sync(() => {
+      console.log("Connecting to database...")
+      return { connection: {} }
+    }),
+    (conn) => Effect.sync(() => {
+      console.log("Closing database connection")
+    })
+  )
+)
+```
+
+## Dependency Graphs
+
+### Composing Layers
+
+Layers can depend on other layers, forming a dependency graph:
+
+```typescript
+import { Context, Effect, Layer } from "effect"
+
+class Config extends Context.Tag("Config")<Config, { dbUrl: string }>() {}
+class Database extends Context.Tag("Database")<Database, { query: (sql: string) => Effect.Effect<unknown> }>() {}
+class UserRepo extends Context.Tag("UserRepo")<UserRepo, { findById: (id: number) => Effect.Effect<unknown> }>() {}
+
+const ConfigLive = Layer.succeed(Config, { dbUrl: "postgres://localhost" })
+
+const DatabaseLive = Layer.effect(
+  Database,
+  Effect.gen(function*() {
+    const config = yield* Config
+    return {
+      query: (sql: string) => Effect.succeed({ sql, url: config.dbUrl })
+    }
+  })
+)
+
+const UserRepoLive = Layer.effect(
+  UserRepo,
+  Effect.gen(function*() {
+    const db = yield* Database
+    return {
+      findById: (id: number) => db.query(`SELECT * FROM users WHERE id = ${id}`)
+    }
+  })
+)
+
+// Compose layers - Effect automatically resolves dependencies
+const AppLayer = UserRepoLive.pipe(
+  Layer.provide(DatabaseLive),
+  Layer.provide(ConfigLive)
+)
+```
+
+### Layer.merge
+
+Combine multiple layers concurrently:
+
+```typescript
+import { Layer } from "effect"
+
+class ServiceA extends Context.Tag("ServiceA")<ServiceA, { value: number }>() {}
+class ServiceB extends Context.Tag("ServiceB")<ServiceB, { name: string }>() {}
+
+const LayerA = Layer.succeed(ServiceA, { value: 42 })
+const LayerB = Layer.succeed(ServiceB, { name: "example" })
+
+// Both services are constructed in parallel
+const CombinedLayer = Layer.merge(LayerA, LayerB)
+```
+
+<Warning>
+By default, layers are shared. If the same layer is used twice, it will only be allocated once. Use `Layer.fresh` to create a new instance each time.
+</Warning>
+
+## Layer Sharing
+
+Layers are memoized by default:
+
+```typescript
+import { Effect, Layer, Ref } from "effect"
+
+class Counter extends Context.Tag("Counter")<Counter, Ref.Ref<number>>() {}
+
+const CounterLive = Layer.scoped(
+  Counter,
+  Effect.acquireRelease(
+    Ref.make(0),
+    (ref) => Effect.sync(() => console.log("Finalizing counter"))
+  )
+)
+
+// Same instance shared across both dependencies
+const layer = Layer.merge(CounterLive, CounterLive)
+
+// To create separate instances:
+const freshLayer = Layer.merge(CounterLive, Layer.fresh(CounterLive))
+```
+
+## Error Handling
+
+```typescript
+import { Effect, Layer } from "effect"
+
+class FailingService extends Context.Tag("FailingService")<FailingService, unknown>() {}
+
+const FailingLayer = Layer.effect(
+  FailingService,
+  Effect.fail("Service initialization failed")
+)
+
+const FallbackLayer = Layer.succeed(FailingService, { fallback: true })
+
+// Recover from layer failure
+const SafeLayer = FailingLayer.pipe(
+  Layer.orElse(() => FallbackLayer)
+)
+```
+
+<Tip>
+Use `Layer.retry` with a schedule to automatically retry failing layer construction.
+</Tip>
+
+## Converting to Runtime
+
+```typescript
+import { Effect, Layer } from "effect"
+
+const program = Effect.gen(function*() {
+  const config = yield* Config
+  const db = yield* Database
+  return yield* db.query("SELECT 1")
+})
+
+// Convert layer to runtime for repeated use
+const main = Effect.gen(function*() {
+  const runtime = yield* Layer.toRuntime(AppLayer)
+  
+  // Run program multiple times with same services
+  yield* runtime.runPromise(program)
+  yield* runtime.runPromise(program)
+})
+```
+
+## Advanced Patterns
+
+### Layer.provideMerge
+
+Provide dependencies while keeping outputs:
+
+```typescript
+const EnrichedLayer = UserRepoLive.pipe(
+  Layer.provideMerge(DatabaseLive)
+)
+// EnrichedLayer provides both Database and UserRepo
+```
+
+### Layer.project
+
+Extract part of a service:
+
+```typescript
+import { Layer } from "effect"
+
+class FullService extends Context.Tag("FullService")<FullService, { a: number; b: string }>() {}
+class PartialService extends Context.Tag("PartialService")<PartialService, { a: number }>() {}
+
+const FullServiceLive = Layer.succeed(FullService, { a: 1, b: "test" })
+
+const PartialServiceLive = FullServiceLive.pipe(
+  Layer.project(FullService, PartialService, (full) => ({ a: full.a }))
+)
+```

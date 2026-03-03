@@ -1,0 +1,438 @@
+---
+title: Context Management
+description: Manage dependencies with Context.Tag and Effect.provideService
+---
+
+Effect's Context system enables type-safe dependency injection, allowing you to define requirements and provide implementations separately.
+
+## Context.Tag - Define a Service
+
+```typescript
+export interface Tag<in out Id, in out Value> extends Effect<Value, never, Id>
+```
+
+A Tag represents a service that can be provided to effects:
+
+```typescript
+import { Context, Effect } from "effect"
+
+class Database extends Context.Tag("Database")<
+  Database,
+  {
+    readonly query: (sql: string) => Effect.Effect<Array<unknown>>
+  }
+>() {}
+```
+
+<Steps>
+
+### Tag Structure
+
+The `Context.Tag` constructor takes:
+1. **Key**: A unique string identifier
+2. **Type Parameters**:
+   - `Id`: The service identifier type (usually the class itself)
+   - `Service`: The service interface/implementation type
+
+### Using Tags
+
+Tags are effects that require the service they represent:
+
+```typescript
+import { Effect } from "effect"
+
+const program = Effect.gen(function* () {
+  const db = yield* Database  // Get Database from context
+  const users = yield* db.query("SELECT * FROM users")
+  return users
+})
+// Effect<Array<unknown>, never, Database>
+//                               ^^^^^^^^ requires Database
+```
+
+</Steps>
+
+## Creating Services
+
+<Steps>
+
+### Define the Interface
+
+```typescript
+import { Context, Effect } from "effect"
+
+interface LoggerService {
+  readonly log: (message: string) => Effect.Effect<void>
+  readonly error: (message: string) => Effect.Effect<void>
+}
+
+class Logger extends Context.Tag("Logger")<Logger, LoggerService>() {}
+```
+
+### Implement the Service
+
+```typescript
+import { Effect } from "effect"
+
+const consoleLogger: LoggerService = {
+  log: (message) => Effect.sync(() => console.log(message)),
+  error: (message) => Effect.sync(() => console.error(message))
+}
+
+const fileLogger: LoggerService = {
+  log: (message) => Effect.sync(() => fs.appendFileSync("log.txt", message)),
+  error: (message) => Effect.sync(() => fs.appendFileSync("error.txt", message))
+}
+```
+
+### Use the Service
+
+```typescript
+import { Effect } from "effect"
+
+const program = Effect.gen(function* () {
+  const logger = yield* Logger
+  yield* logger.log("Application started")
+  yield* logger.error("Something went wrong")
+})
+// Effect<void, never, Logger>
+```
+
+</Steps>
+
+## provideService - Provide Implementations
+
+```typescript
+export const provideService: {
+  <I, S>(tag: Context.Tag<I, S>, service: S): <A, E, R>(self: Effect<A, E, R>) => Effect<A, E, Exclude<R, I>>
+  <A, E, R, I, S>(self: Effect<A, E, R>, tag: Context.Tag<I, S>, service: S): Effect<A, E, Exclude<R, I>>
+}
+```
+
+Provide a service implementation to an effect:
+
+```typescript
+import { Effect } from "effect"
+
+const program = Effect.gen(function* () {
+  const logger = yield* Logger
+  yield* logger.log("Hello, World!")
+})
+// Effect<void, never, Logger>
+
+const runnable = program.pipe(
+  Effect.provideService(Logger, consoleLogger)
+)
+// Effect<void, never, never> - Logger requirement satisfied
+
+Effect.runPromise(runnable)
+```
+
+<Note>
+Notice how `provideService` removes the service from the requirements type: `Logger` becomes `never` after providing.
+</Note>
+
+## Multiple Services
+
+```typescript
+import { Context, Effect } from "effect"
+
+class Database extends Context.Tag("Database")<
+  Database,
+  { query: (sql: string) => Effect.Effect<Array<unknown>> }
+>() {}
+
+class Logger extends Context.Tag("Logger")<
+  Logger,
+  { log: (msg: string) => Effect.Effect<void> }
+>() {}
+
+class Config extends Context.Tag("Config")<
+  Config,
+  { apiUrl: string; timeout: number }
+>() {}
+
+const program = Effect.gen(function* () {
+  const db = yield* Database
+  const logger = yield* Logger
+  const config = yield* Config
+
+  yield* logger.log(`Connecting to ${config.apiUrl}`)
+  const users = yield* db.query("SELECT * FROM users")
+  return users
+})
+// Effect<Array<unknown>, never, Database | Logger | Config>
+```
+
+<Steps>
+
+### Providing Multiple Services
+
+**Chain provideService calls**:
+
+```typescript
+import { Effect } from "effect"
+
+const runnable = program.pipe(
+  Effect.provideService(Database, dbImpl),
+  Effect.provideService(Logger, loggerImpl),
+  Effect.provideService(Config, configImpl)
+)
+// Effect<Array<unknown>, never, never>
+```
+
+**Use Context.make for multiple services**:
+
+```typescript
+import { Effect, Context } from "effect"
+
+const context = Context.empty().pipe(
+  Context.add(Database, dbImpl),
+  Context.add(Logger, loggerImpl),
+  Context.add(Config, configImpl)
+)
+
+const runnable = Effect.provide(program, context)
+// Effect<Array<unknown>, never, never>
+```
+
+</Steps>
+
+## provideServiceEffect - Dynamic Service Creation
+
+```typescript
+export const provideServiceEffect: {
+  <I, S, E1, R1>(
+    tag: Context.Tag<I, S>,
+    effect: Effect<S, E1, R1>
+  ): <A, E, R>(self: Effect<A, E, R>) => Effect<A, E | E1, R1 | Exclude<R, I>>
+}
+```
+
+Provide a service whose creation is itself an effect:
+
+```typescript
+import { Effect } from "effect"
+
+class Database extends Context.Tag("Database")<
+  Database,
+  { query: (sql: string) => Effect.Effect<Array<unknown>> }
+>() {}
+
+// Database initialization is an effect
+const createDatabase = Effect.gen(function* () {
+  yield* Effect.log("Connecting to database...")
+  const connection = yield* Effect.tryPromise(() =>
+    pg.connect("postgresql://localhost/mydb")
+  )
+  yield* Effect.log("Database connected")
+
+  return {
+    query: (sql) => Effect.tryPromise(() => connection.query(sql))
+  }
+})
+
+const program = Effect.gen(function* () {
+  const db = yield* Database
+  return yield* db.query("SELECT * FROM users")
+})
+
+const runnable = program.pipe(
+  Effect.provideServiceEffect(Database, createDatabase)
+)
+
+Effect.runPromise(runnable)
+// Output:
+// Connecting to database...
+// Database connected
+```
+
+## Layers - Composable Service Construction
+
+Layers provide a more powerful abstraction for building and composing services:
+
+```typescript
+import { Effect, Context, Layer } from "effect"
+
+class Logger extends Context.Tag("Logger")<
+  Logger,
+  { log: (msg: string) => Effect.Effect<void> }
+>() {}
+
+class Database extends Context.Tag("Database")<
+  Database,
+  { query: (sql: string) => Effect.Effect<Array<unknown>> }
+>() {}
+
+// Logger layer has no dependencies
+const LoggerLive = Layer.succeed(
+  Logger,
+  {
+    log: (msg) => Effect.sync(() => console.log(msg))
+  }
+)
+
+// Database layer depends on Logger
+const DatabaseLive = Layer.effect(
+  Database,
+  Effect.gen(function* () {
+    const logger = yield* Logger
+    yield* logger.log("Creating database connection")
+
+    return {
+      query: (sql) => Effect.gen(function* () {
+        yield* logger.log(`Executing: ${sql}`)
+        return []
+      })
+    }
+  })
+)
+
+// Compose layers
+const AppLayer = DatabaseLive.pipe(
+  Layer.provide(LoggerLive)
+)
+
+const program = Effect.gen(function* () {
+  const db = yield* Database
+  return yield* db.query("SELECT * FROM users")
+})
+
+const runnable = Effect.provide(program, AppLayer)
+```
+
+<Note>
+Layers enable:
+- **Dependency graphs**: Automatically resolve service dependencies
+- **Resource management**: Acquire and release resources safely
+- **Sharing**: Services are created once and shared across the application
+- **Memoization**: Layer construction is memoized
+</Note>
+
+## Testing with Services
+
+```typescript
+import { Effect, Context } from "effect"
+
+class EmailService extends Context.Tag("EmailService")<
+  EmailService,
+  { send: (to: string, body: string) => Effect.Effect<void> }
+>() {}
+
+const sendWelcomeEmail = (email: string) =>
+  Effect.gen(function* () {
+    const emailService = yield* EmailService
+    yield* emailService.send(email, "Welcome!")
+  })
+
+// Production implementation
+const liveEmailService = {
+  send: (to, body) =>
+    Effect.tryPromise(() => sendEmailViaSmtp(to, body))
+}
+
+// Test implementation
+const testEmailService = {
+  send: (to, body) =>
+    Effect.sync(() => console.log(`Mock email to ${to}: ${body}`))
+}
+
+// In production
+const prod = sendWelcomeEmail("user@example.com").pipe(
+  Effect.provideService(EmailService, liveEmailService)
+)
+
+// In tests
+const test = sendWelcomeEmail("user@example.com").pipe(
+  Effect.provideService(EmailService, testEmailService)
+)
+```
+
+## Best Practices
+
+<Steps>
+
+### Define Service Interfaces
+
+Always define explicit service interfaces:
+
+```typescript
+// ✅ Good: Clear interface
+interface DatabaseService {
+  readonly query: (sql: string) => Effect.Effect<Array<unknown>>
+  readonly execute: (sql: string) => Effect.Effect<void>
+}
+
+class Database extends Context.Tag("Database")<Database, DatabaseService>() {}
+
+// ❌ Bad: Inline type
+class Database extends Context.Tag("Database")<
+  Database,
+  { query: (sql: string) => Effect.Effect<Array<unknown>> }
+>() {}
+```
+
+### Use Unique Keys
+
+Ensure tag keys are unique across your application:
+
+```typescript
+// ✅ Good: Unique keys
+class Database extends Context.Tag("MyApp/Database")<...>() {}
+class Logger extends Context.Tag("MyApp/Logger")<...>() {}
+
+// ❌ Bad: Generic keys that might collide
+class Database extends Context.Tag("db")<...>() {}
+```
+
+### Keep Services Small
+
+Follow the single responsibility principle:
+
+```typescript
+// ✅ Good: Focused services
+class UserRepository extends Context.Tag("UserRepository")<
+  UserRepository,
+  {
+    findById: (id: string) => Effect.Effect<User, NotFoundError>
+    save: (user: User) => Effect.Effect<void>
+  }
+>() {}
+
+class EmailService extends Context.Tag("EmailService")<
+  EmailService,
+  { send: (to: string, body: string) => Effect.Effect<void> }
+>() {}
+
+// ❌ Bad: God service
+class AppService extends Context.Tag("AppService")<
+  AppService,
+  {
+    findUser: ...
+    saveUser: ...
+    sendEmail: ...
+    logMessage: ...
+    // etc.
+  }
+>() {}
+```
+
+### Use Layers for Complex Dependencies
+
+When services have dependencies, use Layers:
+
+```typescript
+import { Layer, Effect, Context } from "effect"
+
+const DatabaseLive = Layer.effect(
+  Database,
+  Effect.gen(function* () {
+    const config = yield* Config
+    const logger = yield* Logger
+    // Use config and logger to create database
+    return createDatabaseImpl(config, logger)
+  })
+)
+```
+
+</Steps>

@@ -1,0 +1,238 @@
+---
+title: Brand
+description: Create nominal types with runtime validation
+---
+
+`Brand` provides nominal types that prevent accidental usage of values in the wrong context.
+
+## Overview
+
+Branded types add a type tag to prevent mixing values of the same underlying type that have different meanings.
+
+```ts
+import { Brand } from "effect"
+
+type UserId = number & Brand.Brand<"UserId">
+type ProductId = number & Brand.Brand<"ProductId">
+
+// These are different types even though both are numbers
+```
+
+## nominal
+
+Create a brand constructor without runtime validation.
+
+```ts
+const nominal: <A extends Brand<any>>() => Brand.Constructor<A>
+```
+
+**Example:**
+
+```ts
+import { Brand } from "effect"
+
+type UserId = number & Brand.Brand<"UserId">
+
+const UserId = Brand.nominal<UserId>()
+
+const id = UserId(123) // UserId
+
+// Type error: can't assign UserId to ProductId
+type ProductId = number & Brand.Brand<"ProductId">
+const ProductId = Brand.nominal<ProductId>()
+const productId: ProductId = id // Error!
+```
+
+## refined
+
+Create a brand constructor with runtime validation.
+
+```ts
+function refined<A extends Brand<any>>(
+  refinement: Predicate<Brand.Unbranded<A>>,
+  onFailure: (unbranded: Brand.Unbranded<A>) => Brand.BrandErrors
+): Brand.Constructor<A>
+```
+
+**Example:**
+
+```ts
+import { Brand } from "effect"
+
+type Int = number & Brand.Brand<"Int">
+
+const Int = Brand.refined<Int>(
+  (n) => Number.isInteger(n),
+  (n) => Brand.error(`Expected ${n} to be an integer`)
+)
+
+const value = Int(42) // Int
+Int(1.5) // throws BrandErrors
+```
+
+### With either
+
+Use `.either()` for validation without throwing.
+
+```ts
+import { Brand, Either } from "effect"
+
+type Positive = number & Brand.Brand<"Positive">
+
+const Positive = Brand.refined<Positive>(
+  (n) => n > 0,
+  (n) => Brand.error(`Expected ${n} to be positive`)
+)
+
+const result = Positive.either(5)
+if (Either.isRight(result)) {
+  console.log(result.right) // 5 as Positive
+}
+```
+
+### With option
+
+```ts
+import { Brand, Option } from "effect"
+
+const result = Positive.option(-5)
+// Option.none()
+
+const result2 = Positive.option(10)
+// Option.some(10 as Positive)
+```
+
+## Brand.Constructor
+
+Constructor interface with multiple validation methods.
+
+```ts
+interface Constructor<in out A extends Brand<any>> {
+  readonly [RefinedConstructorsTypeId]: RefinedConstructorsTypeId
+
+  // Construct or throw
+  (args: Brand.Unbranded<A>): A
+
+  // Construct or return None
+  option(args: Brand.Unbranded<A>): Option.Option<A>
+
+  // Construct or return Left with errors
+  either(args: Brand.Unbranded<A>): Either.Either<A, Brand.BrandErrors>
+
+  // Type guard
+  is(a: Brand.Unbranded<A>): a is Brand.Unbranded<A> & A
+}
+```
+
+## Combining Brands
+
+### all
+
+Combine multiple brand validators.
+
+```ts
+const all: <Brands extends readonly [Brand.Constructor<any>, ...Array<Brand.Constructor<any>>]>(
+  ...brands: Brand.EnsureCommonBase<Brands>
+) => Brand.Constructor<...>
+```
+
+**Example:**
+
+```ts
+import { Brand } from "effect"
+
+type Int = number & Brand.Brand<"Int">
+const Int = Brand.refined<Int>(
+  (n) => Number.isInteger(n),
+  (n) => Brand.error(`Expected ${n} to be an integer`)
+)
+
+type Positive = number & Brand.Brand<"Positive">
+const Positive = Brand.refined<Positive>(
+  (n) => n > 0,
+  (n) => Brand.error(`Expected ${n} to be positive`)
+)
+
+const PositiveInt = Brand.all(Int, Positive)
+
+PositiveInt(5) // number & Brand<"Int"> & Brand<"Positive">
+PositiveInt(-5) // throws
+PositiveInt(1.5) // throws
+```
+
+## Error Types
+
+### BrandErrors
+
+```ts
+interface BrandErrors extends Array<RefinementError> {}
+```
+
+### RefinementError
+
+```ts
+interface RefinementError {
+  readonly meta: unknown
+  readonly message: string
+}
+```
+
+### error
+
+Create a brand error.
+
+```ts
+const error: (message: string, meta?: unknown) => Brand.BrandErrors
+```
+
+### errors
+
+Combine multiple brand errors.
+
+```ts
+const errors: (...errors: Array<Brand.BrandErrors>) => Brand.BrandErrors
+```
+
+## Type Utilities
+
+### Brand.Unbranded
+
+Extract the base type from a brand.
+
+```ts
+type Unbranded<P> = P extends infer Q & Brands<P> ? Q : P
+```
+
+**Example:**
+
+```ts
+type UserId = number & Brand.Brand<"UserId">
+
+type Base = Brand.Unbranded<UserId> // number
+```
+
+### Brand.FromConstructor
+
+Extract brand type from constructor.
+
+```ts
+type FromConstructor<A> = A extends Brand.Constructor<infer B> ? B : never
+```
+
+### unbranded
+
+Remove branding at runtime (no-op).
+
+```ts
+const unbranded: <A extends Brand<any>>(branded: A) => Brand.Unbranded<A>
+```
+
+```ts
+import { Brand } from "effect"
+
+type UserId = number & Brand.Brand<"UserId">
+const UserId = Brand.nominal<UserId>()
+
+const id = UserId(123)
+const raw = Brand.unbranded(id) // number
+```

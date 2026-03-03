@@ -1,0 +1,471 @@
+---
+title: 'Project Structure'
+description: 'Learn how to organize Effect projects for scalability and maintainability'
+icon: 'folder-tree'
+---
+
+A well-structured Effect project improves maintainability, testability, and developer experience. This guide shows recommended patterns for organizing your codebase.
+
+## Recommended Directory Structure
+
+```
+src/
+├── domain/              # Business logic and entities
+│   ├── User.ts
+│   ├── Order.ts
+│   └── Product.ts
+├── services/            # Service definitions and implementations
+│   ├── UserService.ts
+│   ├── OrderService.ts
+│   └── index.ts
+├── layers/              # Layer compositions
+│   ├── database.ts
+│   ├── http.ts
+│   └── app.ts
+├── errors/              # Error types
+│   ├── AppError.ts
+│   └── index.ts
+├── effects/             # Reusable effects and utilities
+│   ├── retry.ts
+│   └── timeout.ts
+├── config/              # Configuration
+│   └── index.ts
+└── index.ts             # Application entry point
+```
+
+## Domain Layer
+
+Define your core business entities and logic.
+
+```typescript src/domain/User.ts
+import { Schema } from "effect"
+
+export class User extends Schema.Class<User>("User")({
+  id: Schema.String,
+  email: Schema.String,
+  name: Schema.String,
+  createdAt: Schema.Date
+}) {}
+
+export class UserNotFound {
+  readonly _tag = "UserNotFound"
+  constructor(readonly id: string) {}
+}
+
+export class InvalidEmail {
+  readonly _tag = "InvalidEmail"
+  constructor(readonly email: string) {}
+}
+```
+
+<Tip>
+Use Schema.Class for domain entities to get automatic encoding/decoding and validation.
+</Tip>
+
+## Service Layer
+
+Define services using the class-based Context.Tag API.
+
+```typescript src/services/UserService.ts
+import { Context, Effect, Layer } from "effect"
+import type { User, UserNotFound, InvalidEmail } from "../domain/User.js"
+
+export class UserService extends Context.Tag("@app/UserService")<
+  UserService,
+  {
+    readonly findById: (id: string) => Effect.Effect<User, UserNotFound>
+    readonly create: (email: string, name: string) => Effect.Effect<User, InvalidEmail>
+    readonly list: () => Effect.Effect<ReadonlyArray<User>>
+  }
+>() {}
+
+// Implementation
+export const UserServiceLive = Layer.effect(
+  UserService,
+  Effect.gen(function* () {
+    const db = yield* Database
+
+    return UserService.of({
+      findById: (id) =>
+        db.query("SELECT * FROM users WHERE id = ?", [id]).pipe(
+          Effect.flatMap(results =>
+            results.length > 0
+              ? Effect.succeed(results[0])
+              : Effect.fail(new UserNotFound(id))
+          )
+        ),
+
+      create: (email, name) =>
+        validateEmail(email).pipe(
+          Effect.flatMap(() =>
+            db.query(
+              "INSERT INTO users (email, name) VALUES (?, ?)",
+              [email, name]
+            )
+          ),
+          Effect.map(result => ({
+            id: result.insertId,
+            email,
+            name,
+            createdAt: new Date()
+          }))
+        ),
+
+      list: () =>
+        db.query("SELECT * FROM users")
+    })
+  })
+)
+```
+
+### Service Index
+
+Export all services from a central location.
+
+```typescript src/services/index.ts
+export * from "./UserService.js"
+export * from "./OrderService.js"
+export * from "./PaymentService.js"
+```
+
+## Error Layer
+
+Centralize error type definitions.
+
+```typescript src/errors/AppError.ts
+export class NetworkError {
+  readonly _tag = "NetworkError"
+  constructor(
+    readonly message: string,
+    readonly cause: unknown
+  ) {}
+}
+
+export class ValidationError {
+  readonly _tag = "ValidationError"
+  constructor(readonly errors: ReadonlyArray<string>) {}
+}
+
+export class DatabaseError {
+  readonly _tag = "DatabaseError"
+  constructor(
+    readonly operation: string,
+    readonly cause: unknown
+  ) {}
+}
+
+export class NotFoundError {
+  readonly _tag = "NotFoundError"
+  constructor(
+    readonly entity: string,
+    readonly id: string
+  ) {}
+}
+
+export type AppError =
+  | NetworkError
+  | ValidationError
+  | DatabaseError
+  | NotFoundError
+```
+
+```typescript src/errors/index.ts
+export * from "./AppError.js"
+```
+
+<Warning>
+Always use discriminated unions with `_tag` for error types. This enables pattern matching with `Effect.catchTag`.
+</Warning>
+
+## Layer Composition
+
+Organize layers by concern.
+
+```typescript src/layers/database.ts
+import { Effect, Layer } from "effect"
+import { Database } from "../services/Database.js"
+
+export const DatabaseLive = Layer.scoped(
+  Database,
+  Effect.gen(function* () {
+    const config = yield* Config
+    const pool = yield* Effect.acquireRelease(
+      Effect.sync(() => createPool(config.database)),
+      (pool) => Effect.promise(() => pool.end())
+    )
+
+    return Database.of({
+      query: (sql, params) =>
+        Effect.tryPromise({
+          try: () => pool.query(sql, params),
+          catch: (error) => new DatabaseError("query", error)
+        })
+    })
+  })
+)
+```
+
+```typescript src/layers/app.ts
+import { Layer } from "effect"
+import { UserServiceLive } from "../services/UserService.js"
+import { OrderServiceLive } from "../services/OrderService.js"
+import { DatabaseLive } from "./database.js"
+import { HttpClientLive } from "./http.js"
+
+export const AppLive = Layer.mergeAll(
+  UserServiceLive,
+  OrderServiceLive
+).pipe(
+  Layer.provide(DatabaseLive),
+  Layer.provide(HttpClientLive)
+)
+```
+
+<Tip>
+Compose layers in separate files, then merge them in a main app layer. This improves testability.
+</Tip>
+
+## Configuration
+
+Use Effect's Config module for type-safe configuration.
+
+```typescript src/config/index.ts
+import { Config, Effect } from "effect"
+
+export class AppConfig extends Schema.Class<AppConfig>("AppConfig")({
+  port: Schema.Number,
+  database: Schema.Struct({
+    host: Schema.String,
+    port: Schema.Number,
+    database: Schema.String,
+    user: Schema.String,
+    password: Schema.String
+  }),
+  redis: Schema.Struct({
+    host: Schema.String,
+    port: Schema.Number
+  })
+}) {}
+
+export const config = Config.all({
+  port: Config.number("PORT").pipe(
+    Config.withDefault(3000)
+  ),
+  database: Config.all({
+    host: Config.string("DB_HOST"),
+    port: Config.number("DB_PORT").pipe(
+      Config.withDefault(5432)
+    ),
+    database: Config.string("DB_NAME"),
+    user: Config.string("DB_USER"),
+    password: Config.secret("DB_PASSWORD")
+  }),
+  redis: Config.all({
+    host: Config.string("REDIS_HOST"),
+    port: Config.number("REDIS_PORT").pipe(
+      Config.withDefault(6379)
+    )
+  })
+})
+```
+
+## Application Entry Point
+
+```typescript src/index.ts
+import { Effect, Layer, Runtime } from "effect"
+import { AppLive } from "./layers/app.js"
+import { config } from "./config/index.js"
+import { UserService } from "./services/UserService.js"
+
+const program = Effect.gen(function* () {
+  const cfg = yield* Effect.config(config)
+  const userService = yield* UserService
+
+  // Start your application
+  yield* Effect.log(`Server starting on port ${cfg.port}`)
+
+  const users = yield* userService.list()
+  yield* Effect.log(`Found ${users.length} users`)
+})
+
+const main = program.pipe(
+  Effect.provide(AppLive),
+  Effect.tapErrorCause(Effect.logError)
+)
+
+Effect.runPromise(main).catch(console.error)
+```
+
+## Testing Structure
+
+```
+tests/
+├── unit/
+│   ├── domain/
+│   │   └── User.test.ts
+│   └── services/
+│       └── UserService.test.ts
+├── integration/
+│   └── api/
+│       └── users.test.ts
+└── helpers/
+    ├── layers.ts
+    └── fixtures.ts
+```
+
+### Test Layers
+
+```typescript tests/helpers/layers.ts
+import { Layer, Effect } from "effect"
+import { UserService } from "../../src/services/UserService.js"
+import type { User } from "../../src/domain/User.js"
+
+export const UserServiceTest = Layer.succeed(
+  UserService,
+  UserService.of({
+    findById: (id) =>
+      Effect.succeed({
+        id,
+        email: "test@example.com",
+        name: "Test User",
+        createdAt: new Date()
+      }),
+
+    create: (email, name) =>
+      Effect.succeed({
+        id: "test-id",
+        email,
+        name,
+        createdAt: new Date()
+      }),
+
+    list: () => Effect.succeed([])
+  })
+)
+```
+
+### Unit Tests
+
+```typescript tests/unit/services/UserService.test.ts
+import { it } from "@effect/vitest"
+import { Effect } from "effect"
+import { UserService } from "../../../src/services/UserService.js"
+import { UserServiceTest } from "../../helpers/layers.js"
+
+it.effect("should find user by id", () =>
+  Effect.gen(function* () {
+    const service = yield* UserService
+    const user = yield* service.findById("123")
+
+    assert.strictEqual(user.id, "123")
+    assert.strictEqual(user.email, "test@example.com")
+  }).pipe(
+    Effect.provide(UserServiceTest)
+  )
+)
+```
+
+## Modular Architecture
+
+For larger projects, organize by feature modules.
+
+```
+src/
+├── modules/
+│   ├── users/
+│   │   ├── domain/
+│   │   │   └── User.ts
+│   │   ├── services/
+│   │   │   └── UserService.ts
+│   │   ├── layers/
+│   │   │   └── index.ts
+│   │   └── index.ts
+│   ├── orders/
+│   │   ├── domain/
+│   │   ├── services/
+│   │   ├── layers/
+│   │   └── index.ts
+│   └── payments/
+│       ├── domain/
+│       ├── services/
+│       ├── layers/
+│       └── index.ts
+├── shared/
+│   ├── errors/
+│   ├── utils/
+│   └── config/
+└── index.ts
+```
+
+<Tip>
+Module-based structure works well for large applications with distinct bounded contexts.
+</Tip>
+
+## Dependency Management
+
+Visualize service dependencies clearly.
+
+```typescript
+// Good: Clear dependency chain
+const OrderServiceLive = Layer.effect(
+  OrderService,
+  Effect.gen(function* () {
+    const userService = yield* UserService
+    const paymentService = yield* PaymentService
+    const emailService = yield* EmailService
+
+    return OrderService.of({
+      create: (userId, items) =>
+        Effect.gen(function* () {
+          const user = yield* userService.findById(userId)
+          const payment = yield* paymentService.process(items)
+          const order = yield* createOrder(user, items, payment)
+          yield* emailService.sendOrderConfirmation(order)
+          return order
+        })
+    })
+  })
+)
+```
+
+## File Naming Conventions
+
+- **Domain entities**: PascalCase (User.ts, Order.ts)
+- **Services**: PascalCase with suffix (UserService.ts)
+- **Layers**: camelCase (database.ts, app.ts)
+- **Utilities**: camelCase (retry.ts, validation.ts)
+- **Tests**: Same as source with .test.ts suffix
+
+## Barrel Exports
+
+Use index files to create clean public APIs.
+
+```typescript src/services/index.ts
+export * from "./UserService.js"
+export * from "./OrderService.js"
+```
+
+```typescript src/index.ts
+// Consumers can import from a single location
+import { UserService, OrderService } from "./services/index.js"
+```
+
+<Warning>
+Avoid circular dependencies. If you encounter them, extract shared types to a separate file.
+</Warning>
+
+## Best Practices
+
+1. **Separate concerns**: Keep domain, services, and layers distinct
+2. **Single responsibility**: Each service should have a clear purpose
+3. **Type errors explicitly**: Define specific error types per operation
+4. **Test layers separately**: Create mock layers for unit testing
+5. **Document dependencies**: Make service dependencies explicit
+6. **Use Schema**: Leverage Schema for validation and type safety
+7. **Avoid deep nesting**: Keep directory structure shallow and clear
+
+## Next Steps
+
+- Learn about [Testing Strategies](/guides/best-practices/testing-strategies)
+- Explore [Type Safety](/guides/best-practices/type-safety)
+- Master [Performance Optimization](/guides/best-practices/performance-optimization)

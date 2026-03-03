@@ -1,0 +1,186 @@
+---
+title: The Effect Type
+description: Understanding Effect<A, E, R> - the core type that represents effectful computations
+---
+
+The `Effect<A, E, R>` type is the foundation of the Effect library. It represents a description of a computation that can succeed, fail, or require dependencies.
+
+## Type Parameters
+
+The Effect type has three type parameters:
+
+```typescript
+interface Effect<out A, out E = never, out R = never>
+```
+
+- **A (Success)**: The type of value produced on success
+- **E (Error)**: The type of expected errors that can occur
+- **R (Requirements)**: The type of dependencies required to run the effect
+
+All three parameters are **covariant** (output positions), meaning Effect describes what it produces, not what it consumes.
+
+## Understanding the Type Parameters
+
+<Steps>
+
+### Success Type (A)
+
+The success type represents the value that will be produced when the effect runs successfully:
+
+```typescript
+import { Effect } from "effect"
+
+// Effect<number, never, never>
+const program = Effect.succeed(42)
+```
+
+This effect will produce a `number` when executed.
+
+### Error Type (E)
+
+The error type represents expected, recoverable errors:
+
+```typescript
+import { Effect } from "effect"
+
+class NetworkError {
+  readonly _tag = "NetworkError"
+  constructor(readonly message: string) {}
+}
+
+// Effect<never, NetworkError, never>
+const failing = Effect.fail(new NetworkError("Connection timeout"))
+```
+
+When `E = never`, the effect cannot fail with a typed error.
+
+### Requirements Type (R)
+
+The requirements type represents dependencies needed to execute the effect:
+
+```typescript
+import { Effect, Context } from "effect"
+
+class Database extends Context.Tag("Database")<
+  Database,
+  { query: (sql: string) => Effect.Effect<unknown> }
+>() {}
+
+// Effect<unknown, never, Database>
+const program = Database.pipe(
+  Effect.flatMap((db) => db.query("SELECT * FROM users"))
+)
+```
+
+When `R = never`, the effect has no dependencies.
+
+</Steps>
+
+## Type Extractors
+
+Effect provides utility types to extract each parameter from an Effect type:
+
+```typescript
+import { Effect } from "effect"
+
+type MyEffect = Effect.Effect<string, Error, Database>
+
+// Extract success type
+type Success = Effect.Success<MyEffect>  // string
+
+// Extract error type
+type Err = Effect.Error<MyEffect>  // Error
+
+// Extract context type
+type Ctx = Effect.Context<MyEffect>  // Database
+```
+
+## Effect as a Description
+
+<Note>
+An Effect value is just a **description** or blueprint of a computation. Creating an Effect does not execute it - you need a Runtime to actually run the effect.
+</Note>
+
+```typescript
+import { Effect } from "effect"
+
+// This just describes a computation, nothing is executed yet
+const program = Effect.sync(() => {
+  console.log("This won't print until the effect runs!")
+  return 42
+})
+
+// The effect must be explicitly run
+Effect.runSync(program)  // NOW "This won't print..." is logged
+```
+
+## Effect is Compositional
+
+Effects can be composed together, and the type system tracks all three parameters:
+
+```typescript
+import { Effect } from "effect"
+
+const readFile: Effect.Effect<string, Error, FileSystem> = ...
+const parseJson: Effect.Effect<object, ParseError, never> = ...
+
+// The composed effect combines all type parameters
+const program = readFile.pipe(
+  Effect.flatMap(parseJson)
+)
+// Effect<object, Error | ParseError, FileSystem>
+```
+
+## Generator Syntax
+
+Effect supports generator syntax for writing imperative-style code:
+
+```typescript
+import { Effect } from "effect"
+
+const program = Effect.gen(function* () {
+  const a = yield* Effect.succeed(1)
+  const b = yield* Effect.succeed(2)
+  return a + b
+})
+// Effect<number, never, never>
+```
+
+The generator unwraps Effect values using `yield*`, making the code read sequentially while maintaining all the benefits of the Effect type system.
+
+## Variance and Type Safety
+
+From the source code:
+
+```typescript
+interface VarianceStruct<out A, out E, out R> {
+  readonly _V: string
+  readonly _A: Covariant<A>
+  readonly _E: Covariant<E>
+  readonly _R: Covariant<R>
+}
+```
+
+All parameters are covariant because Effect represents a computation that produces these types, rather than consuming them. This enables safe type widening and composition.
+
+## Related Types
+
+Effect unifies with other common types:
+
+- **Either**: Becomes `Effect<A, E, never>`
+- **Option**: Becomes `Effect<A, NoSuchElementException, never>`
+- **Tag**: Becomes `Effect<Service, never, Id>`
+
+```typescript
+import { Effect, Either, Option } from "effect"
+
+const fromEither: Either.Either<number, string> = Either.right(42)
+const fromOption: Option.Option<number> = Option.some(42)
+
+// Both can be used directly as Effects
+Effect.gen(function* () {
+  const a = yield* fromEither  // unwraps to number
+  const b = yield* fromOption  // unwraps to number
+  return a + b
+})
+```

@@ -1,0 +1,77 @@
+---
+title: List
+description: API reference for the List immutable linked list type
+---
+
+`List` is an immutable linked list data structure.
+
+## Type Definition
+
+```typescript
+type List<A> = Cons<A> | Nil
+```
+
+## Constructors
+
+### nil
+
+Creates an empty `List`.
+
+```typescript
+const nil: <A = never>() => List<A>
+```
+
+### cons
+
+Prepends an element to a `List`.
+
+```typescript
+const cons: <A>(head: A, tail: List<A>) => List<A>
+```
+
+### make
+
+Creates a `List` from values.
+
+```typescript
+const make: <As extends ReadonlyArray<any>>(...as: As) => List<As[number]>
+```
+
+## Operations
+
+### head
+
+Retrieves the first element.
+
+```typescript
+const head: <A>(self: List<A>) => Option<A>
+```
+
+### tail
+
+Retrieves all but the first element.
+
+```typescript
+const tail: <A>(self: List<A>) => Option<List<A>>
+```
+
+### map
+
+Transforms elements in a `List`.
+
+```typescript
+const map: <A, B>(f: (a: A) => B) => (self: List<A>) => List<B>
+```
+
+## Example
+
+```typescript
+import { List } from "effect"
+
+const list = List.make(1, 2, 3).pipe(
+  List.prepend(0),
+  List.map(n => n * 2)
+)
+
+console.log(List.head(list)) // Some(0)
+```

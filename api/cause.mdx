@@ -1,0 +1,556 @@
+---
+title: Cause
+description: Cause type and operations for comprehensive error tracking in Effect
+---
+
+The `Cause` module provides a lossless error model that captures all information about failures in Effect workflows, including parallel errors, sequential errors, defects, and interruptions.
+
+## Type
+
+```ts
+type Cause<E> =
+  | Empty
+  | Fail<E>
+  | Die
+  | Interrupt
+  | Sequential<E>
+  | Parallel<E>
+```
+
+Represents the full history of a failure within an `Effect`.
+
+<ParamField path="E" type="type parameter">
+  The error type contained in the cause
+</ParamField>
+
+<ResponseField name="Cause<E>" type="Cause">
+  A data structure capturing all failure information
+</ResponseField>
+
+## Cause Variants
+
+### Empty
+
+Represents a lack of errors.
+
+```ts
+interface Empty extends Cause.Variance<never>
+```
+
+### Fail
+
+Represents an expected error.
+
+```ts
+interface Fail<out E> extends Cause.Variance<E> {
+  readonly _tag: "Fail"
+  readonly error: E
+}
+```
+
+<ParamField path="error" type="E">
+  The error value
+</ParamField>
+
+### Die
+
+Represents an unexpected defect.
+
+```ts
+interface Die extends Cause.Variance<never> {
+  readonly _tag: "Die"
+  readonly defect: unknown
+}
+```
+
+<ParamField path="defect" type="unknown">
+  The defect (unrecoverable error)
+</ParamField>
+
+### Interrupt
+
+Represents fiber interruption.
+
+```ts
+interface Interrupt extends Cause.Variance<never> {
+  readonly _tag: "Interrupt"
+  readonly fiberId: FiberId.FiberId
+}
+```
+
+<ParamField path="fiberId" type="FiberId.FiberId">
+  The ID of the interrupted fiber
+</ParamField>
+
+### Sequential
+
+Represents sequential composition of two causes.
+
+```ts
+interface Sequential<out E> extends Cause.Variance<E> {
+  readonly _tag: "Sequential"
+  readonly left: Cause<E>
+  readonly right: Cause<E>
+}
+```
+
+### Parallel
+
+Represents parallel composition of two causes.
+
+```ts
+interface Parallel<out E> extends Cause.Variance<E> {
+  readonly _tag: "Parallel"
+  readonly left: Cause<E>
+  readonly right: Cause<E>
+}
+```
+
+## Constructors
+
+### empty
+
+Creates an `Empty` cause.
+
+```ts
+const empty: Cause<never>
+```
+
+<ResponseField name="return" type="Cause<never>">
+  A cause representing no error
+</ResponseField>
+
+```ts
+import { Cause } from "effect"
+
+const noCause = Cause.empty
+```
+
+### fail
+
+Creates a `Fail` cause from an expected error.
+
+```ts
+const fail: <E>(error: E) => Cause<E>
+```
+
+<ParamField path="error" type="E" required>
+  The error value
+</ParamField>
+
+<ResponseField name="return" type="Cause<E>">
+  A cause representing a typed error
+</ResponseField>
+
+```ts
+import { Cause } from "effect"
+
+const cause = Cause.fail("Something went wrong")
+```
+
+### die
+
+Creates a `Die` cause from an unexpected error.
+
+```ts
+const die: (defect: unknown) => Cause<never>
+```
+
+<ParamField path="defect" type="unknown" required>
+  The defect value
+</ParamField>
+
+<ResponseField name="return" type="Cause<never>">
+  A cause representing an unrecoverable defect
+</ResponseField>
+
+```ts
+import { Cause } from "effect"
+
+const cause = Cause.die(new Error("Unexpected crash"))
+```
+
+### interrupt
+
+Creates an `Interrupt` cause from a `FiberId`.
+
+```ts
+const interrupt: (fiberId: FiberId.FiberId) => Cause<never>
+```
+
+<ParamField path="fiberId" type="FiberId.FiberId" required>
+  The fiber ID that was interrupted
+</ParamField>
+
+<ResponseField name="return" type="Cause<never>">
+  A cause representing an interruption
+</ResponseField>
+
+### parallel
+
+Combines two causes in parallel.
+
+```ts
+const parallel: <E, E2>(left: Cause<E>, right: Cause<E2>) => Cause<E | E2>
+```
+
+<ParamField path="left" type="Cause<E>" required>
+  The first cause
+</ParamField>
+
+<ParamField path="right" type="Cause<E2>" required>
+  The second cause
+</ParamField>
+
+<ResponseField name="return" type="Cause<E | E2>">
+  A cause combining both errors in parallel
+</ResponseField>
+
+```ts
+import { Cause } from "effect"
+
+const cause = Cause.parallel(
+  Cause.fail("error1"),
+  Cause.fail("error2")
+)
+```
+
+### sequential
+
+Combines two causes sequentially.
+
+```ts
+const sequential: <E, E2>(left: Cause<E>, right: Cause<E2>) => Cause<E | E2>
+```
+
+<ParamField path="left" type="Cause<E>" required>
+  The first cause
+</ParamField>
+
+<ParamField path="right" type="Cause<E2>" required>
+  The second cause
+</ParamField>
+
+<ResponseField name="return" type="Cause<E | E2>">
+  A cause combining both errors sequentially
+</ResponseField>
+
+## Guards
+
+### isCause
+
+Checks if a value is a `Cause`.
+
+```ts
+const isCause: (u: unknown) => u is Cause<unknown>
+```
+
+### isEmptyType
+
+Checks if a `Cause` is an `Empty` type.
+
+```ts
+const isEmptyType: <E>(self: Cause<E>) => self is Empty
+```
+
+### isFailType
+
+Checks if a `Cause` is a `Fail` type.
+
+```ts
+const isFailType: <E>(self: Cause<E>) => self is Fail<E>
+```
+
+### isDieType
+
+Checks if a `Cause` is a `Die` type.
+
+```ts
+const isDieType: <E>(self: Cause<E>) => self is Die
+```
+
+### isInterruptType
+
+Checks if a `Cause` is an `Interrupt` type.
+
+```ts
+const isInterruptType: <E>(self: Cause<E>) => self is Interrupt
+```
+
+## Getters
+
+### isEmpty
+
+Checks if a `Cause` is entirely empty.
+
+```ts
+const isEmpty: <E>(self: Cause<E>) => boolean
+```
+
+<ParamField path="self" type="Cause<E>" required>
+  The cause to check
+</ParamField>
+
+<ResponseField name="return" type="boolean">
+  `true` if the cause contains no errors
+</ResponseField>
+
+### isFailure
+
+Checks if a `Cause` contains a failure.
+
+```ts
+const isFailure: <E>(self: Cause<E>) => boolean
+```
+
+<ParamField path="self" type="Cause<E>" required>
+  The cause to check
+</ParamField>
+
+<ResponseField name="return" type="boolean">
+  `true` if the cause includes any `Fail` error
+</ResponseField>
+
+### isDie
+
+Checks if a `Cause` contains a defect.
+
+```ts
+const isDie: <E>(self: Cause<E>) => boolean
+```
+
+### isInterrupted
+
+Checks if a `Cause` contains an interruption.
+
+```ts
+const isInterrupted: <E>(self: Cause<E>) => boolean
+```
+
+### failures
+
+Extracts all recoverable errors from a `Cause`.
+
+```ts
+const failures: <E>(self: Cause<E>) => Chunk.Chunk<E>
+```
+
+<ParamField path="self" type="Cause<E>" required>
+  The cause to extract from
+</ParamField>
+
+<ResponseField name="return" type="Chunk.Chunk<E>">
+  A collection of all `Fail` values
+</ResponseField>
+
+```ts
+import { Cause } from "effect"
+
+const cause = Cause.parallel(
+  Cause.fail("error1"),
+  Cause.fail("error2")
+)
+
+const errors = Cause.failures(cause)
+// Chunk.Chunk<string>
+```
+
+### defects
+
+Extracts all unrecoverable defects from a `Cause`.
+
+```ts
+const defects: <E>(self: Cause<E>) => Chunk.Chunk<unknown>
+```
+
+### interruptors
+
+Collects all `FiberId`s responsible for interrupting a fiber.
+
+```ts
+const interruptors: <E>(self: Cause<E>) => HashSet.HashSet<FiberId.FiberId>
+```
+
+## Mapping
+
+### map
+
+Transforms the errors in a `Cause`.
+
+```ts
+const map: {
+  <E, E2>(f: (e: E) => E2): (self: Cause<E>) => Cause<E2>
+  <E, E2>(self: Cause<E>, f: (e: E) => E2): Cause<E2>
+}
+```
+
+<ParamField path="self" type="Cause<E>" required>
+  The cause to transform
+</ParamField>
+
+<ParamField path="f" type="(e: E) => E2" required>
+  The transformation function
+</ParamField>
+
+<ResponseField name="return" type="Cause<E2>">
+  A cause with transformed errors
+</ResponseField>
+
+```ts
+import { Cause } from "effect"
+
+const cause = Cause.fail("error")
+const mapped = Cause.map(cause, (e) => e.toUpperCase())
+```
+
+### flatMap
+
+Transforms errors in a `Cause` into new causes.
+
+```ts
+const flatMap: {
+  <E, E2>(f: (e: E) => Cause<E2>): (self: Cause<E>) => Cause<E2>
+  <E, E2>(self: Cause<E>, f: (e: E) => Cause<E2>): Cause<E2>
+}
+```
+
+## Matching
+
+### match
+
+Transforms a `Cause` into a single value using custom handlers.
+
+```ts
+const match: {
+  <Z, E>(options: {
+    readonly onEmpty: Z
+    readonly onFail: (error: E) => Z
+    readonly onDie: (defect: unknown) => Z
+    readonly onInterrupt: (fiberId: FiberId.FiberId) => Z
+    readonly onSequential: (left: Z, right: Z) => Z
+    readonly onParallel: (left: Z, right: Z) => Z
+  }): (self: Cause<E>) => Z
+  ...
+}
+```
+
+<ParamField path="self" type="Cause<E>" required>
+  The cause to match on
+</ParamField>
+
+<ParamField path="options" type="object" required>
+  Handlers for each cause type
+</ParamField>
+
+<ResponseField name="return" type="Z">
+  The result of applying the appropriate handler
+</ResponseField>
+
+```ts
+import { Cause } from "effect"
+
+const cause = Cause.fail("error")
+
+const result = Cause.match(cause, {
+  onEmpty: 0,
+  onFail: (error) => 1,
+  onDie: (defect) => 2,
+  onInterrupt: (fiberId) => 3,
+  onSequential: (left, right) => left + right,
+  onParallel: (left, right) => left + right
+})
+// result: 1
+```
+
+## Error Types
+
+### RuntimeException
+
+An error representing a runtime error.
+
+```ts
+const RuntimeException: new(message?: string) => RuntimeException
+```
+
+### InterruptedException
+
+An error representing fiber interruption.
+
+```ts
+const InterruptedException: new(message?: string) => InterruptedException
+```
+
+### IllegalArgumentException
+
+An error representing an invalid argument.
+
+```ts
+const IllegalArgumentException: new(message?: string) => IllegalArgumentException
+```
+
+### NoSuchElementException
+
+An error that occurs when an expected element is missing.
+
+```ts
+const NoSuchElementException: new(message?: string) => NoSuchElementException
+```
+
+### TimeoutException
+
+An error representing a computation that timed out.
+
+```ts
+const TimeoutException: new(message?: string) => TimeoutException
+```
+
+### UnknownException
+
+A checked exception for handling unknown errors.
+
+```ts
+const UnknownException: new(error: unknown, message?: string) => UnknownException
+```
+
+<ParamField path="error" type="unknown" required>
+  The unknown error to wrap
+</ParamField>
+
+<ParamField path="message" type="string">
+  Optional error message
+</ParamField>
+
+<Note>
+  The `error` argument is stored in the `error` property and passed as the cause to preserve stack traces.
+</Note>
+
+## Formatting
+
+### pretty
+
+Converts a `Cause` into a human-readable string.
+
+```ts
+const pretty: <E>(cause: Cause<E>, options?: {
+  readonly renderErrorCause?: boolean
+}) => string
+```
+
+<ParamField path="cause" type="Cause<E>" required>
+  The cause to format
+</ParamField>
+
+<ParamField path="options.renderErrorCause" type="boolean">
+  Whether to render the error cause
+</ParamField>
+
+<ResponseField name="return" type="string">
+  A formatted string representation
+</ResponseField>
+
+```ts
+import { Cause } from "effect"
+
+const cause = Cause.fail("Something went wrong")
+console.log(Cause.pretty(cause))
+```

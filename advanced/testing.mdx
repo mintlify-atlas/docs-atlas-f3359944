@@ -1,0 +1,318 @@
+---
+title: Testing
+description: Test Effect programs with @effect/vitest, TestContext, and service mocking
+---
+
+Effect provides comprehensive testing utilities through `@effect/vitest` for writing reliable tests.
+
+## Setup
+
+Install the testing package:
+
+```bash
+pnpm add -D @effect/vitest
+```
+
+## Basic Testing
+
+### it.effect
+
+Use `it.effect` for testing Effect-based code:
+
+```typescript
+import { describe, it } from "@effect/vitest"
+import { strictEqual } from "@effect/vitest/utils"
+import { Effect } from "effect"
+
+describe("User Service", () => {
+  it.effect("should fetch user by id", () =>
+    Effect.gen(function*() {
+      const userId = 123
+      const user = yield* Effect.succeed({ id: userId, name: "Alice" })
+      
+      strictEqual(user.id, userId)
+      strictEqual(user.name, "Alice")
+    })
+  )
+})
+```
+
+<Warning>
+Never use `Effect.runSync` with regular `it()`. Always use `it.effect()` for Effect-based tests. Never use vitest's `expect` - use assertion methods from `@effect/vitest/utils` instead.
+</Warning>
+
+## Assertion Utilities
+
+```typescript
+import { assertTrue, assertFalse, deepStrictEqual, strictEqual } from "@effect/vitest/utils"
+import { Effect, Exit } from "effect"
+
+it.effect("assertions example", () =>
+  Effect.gen(function*() {
+    const value = yield* Effect.succeed(42)
+    strictEqual(value, 42)
+    
+    const array = yield* Effect.succeed([1, 2, 3])
+    deepStrictEqual(array, [1, 2, 3])
+    
+    const result = yield* Effect.exit(Effect.succeed(true))
+    assertTrue(Exit.isSuccess(result))
+  })
+)
+```
+
+## TestContext
+
+### TestClock
+
+Control time in tests:
+
+```typescript
+import { it } from "@effect/vitest"
+import { strictEqual } from "@effect/vitest/utils"
+import { Effect, Duration, TestClock, Ref } from "effect"
+
+it.effect("should delay execution", () =>
+  Effect.gen(function*() {
+    const ref = yield* Ref.make(0)
+    
+    // Start a delayed operation
+    const fiber = yield* Effect.fork(
+      Effect.gen(function*() {
+        yield* Effect.sleep(Duration.seconds(10))
+        yield* Ref.set(ref, 42)
+      })
+    )
+    
+    // Time hasn't advanced yet
+    const before = yield* Ref.get(ref)
+    strictEqual(before, 0)
+    
+    // Advance time by 10 seconds
+    yield* TestClock.adjust(Duration.seconds(10))
+    yield* Effect.yieldNow()
+    
+    // Now the delayed operation completed
+    const after = yield* Ref.get(ref)
+    strictEqual(after, 42)
+  })
+)
+```
+
+### TestRandom
+
+Control random number generation:
+
+```typescript
+import { Effect, Random, TestRandom } from "effect"
+import { it } from "@effect/vitest"
+import { strictEqual } from "@effect/vitest/utils"
+
+it.effect("should use deterministic random", () =>
+  Effect.gen(function*() {
+    // Set the next random values
+    yield* TestRandom.feedInts(1, 2, 3)
+    
+    const v1 = yield* Random.nextInt
+    const v2 = yield* Random.nextInt
+    const v3 = yield* Random.nextInt
+    
+    strictEqual(v1, 1)
+    strictEqual(v2, 2)
+    strictEqual(v3, 3)
+  })
+)
+```
+
+## Mocking Services
+
+### Layer.mock
+
+Create mock implementations with `Layer.mock`:
+
+```typescript
+import { Context, Effect, Layer } from "effect"
+import { it } from "@effect/vitest"
+import { strictEqual } from "@effect/vitest/utils"
+
+class UserRepo extends Context.Tag("UserRepo")<
+  UserRepo,
+  {
+    findById: (id: number) => Effect.Effect<{ id: number; name: string }>
+    save: (user: { id: number; name: string }) => Effect.Effect<void>
+  }
+>() {}
+
+// Mock only the methods you need
+const UserRepoMock = Layer.mock(UserRepo, {
+  findById: (id) => Effect.succeed({ id, name: "Mock User" })
+  // save is not implemented - will throw if called
+})
+
+it.effect("should use mock repository", () =>
+  Effect.gen(function*() {
+    const user = yield* UserRepo.pipe(
+      Effect.flatMap(repo => repo.findById(1))
+    )
+    
+    strictEqual(user.name, "Mock User")
+  }).pipe(Effect.provide(UserRepoMock))
+)
+```
+
+### Full Service Mocks
+
+```typescript
+import { Context, Effect, Layer, Ref } from "effect"
+
+class Database extends Context.Tag("Database")<
+  Database,
+  {
+    query: (sql: string) => Effect.Effect<unknown[]>
+    execute: (sql: string) => Effect.Effect<void>
+  }
+>() {}
+
+const DatabaseMock = Effect.gen(function*() {
+  const queries = yield* Ref.make<string[]>([])
+  
+  return {
+    query: (sql: string) => Effect.gen(function*() {
+      yield* Ref.update(queries, (qs) => [...qs, sql])
+      return [{ id: 1, result: "mock" }]
+    }),
+    execute: (sql: string) => Effect.gen(function*() {
+      yield* Ref.update(queries, (qs) => [...qs, sql])
+    }),
+    getQueries: () => Ref.get(queries)
+  }
+})
+
+const DatabaseTestLayer = Layer.effect(Database, DatabaseMock)
+```
+
+## Testing with Dependencies
+
+```typescript
+import { Context, Effect, Layer } from "effect"
+import { it } from "@effect/vitest"
+import { deepStrictEqual } from "@effect/vitest/utils"
+
+class Config extends Context.Tag("Config")<Config, { maxRetries: number }>() {}
+class Logger extends Context.Tag("Logger")<Logger, { log: (msg: string) => Effect.Effect<void> }>() {}
+
+class RetryService extends Context.Tag("RetryService")<
+  RetryService,
+  { retry: <A, E>(effect: Effect.Effect<A, E>) => Effect.Effect<A, E> }
+>() {}
+
+const RetryServiceLive = Layer.effect(
+  RetryService,
+  Effect.gen(function*() {
+    const config = yield* Config
+    const logger = yield* Logger
+    
+    return {
+      retry: <A, E>(effect: Effect.Effect<A, E>) =>
+        effect.pipe(
+          Effect.retry({ times: config.maxRetries }),
+          Effect.tapError((error) => logger.log(`Retry failed: ${error}`))
+        )
+    }
+  })
+)
+
+// Test with mocked dependencies
+const TestLayer = Layer.mergeAll(
+  Layer.succeed(Config, { maxRetries: 3 }),
+  Layer.succeed(Logger, {
+    log: (msg) => Effect.succeed(console.log(msg))
+  }),
+  RetryServiceLive
+)
+
+it.effect("should retry with config", () =>
+  Effect.gen(function*() {
+    const service = yield* RetryService
+    let attempts = 0
+    
+    const result = yield* service.retry(
+      Effect.gen(function*() {
+        attempts++
+        if (attempts < 3) {
+          yield* Effect.fail("Not yet")
+        }
+        return "Success!"
+      })
+    )
+    
+    deepStrictEqual(result, "Success!")
+    deepStrictEqual(attempts, 3)
+  }).pipe(Effect.provide(TestLayer))
+)
+```
+
+## Scoped Tests
+
+Test resource management:
+
+```typescript
+import { Effect, Ref } from "effect"
+import { it } from "@effect/vitest"
+import { deepStrictEqual } from "@effect/vitest/utils"
+
+it.scoped("should clean up resources", () =>
+  Effect.gen(function*() {
+    const cleanedUp = yield* Ref.make<boolean>(false)
+    
+    yield* Effect.acquireRelease(
+      Effect.succeed("resource"),
+      () => Ref.set(cleanedUp, true)
+    )
+    
+    // Resource is still alive within scope
+    const before = yield* Ref.get(cleanedUp)
+    deepStrictEqual(before, false)
+    
+    // After the test, cleanup will run
+  })
+)
+// cleanedUp will be true after test completes
+```
+
+<Tip>
+Use `it.scoped` when testing code that uses `Effect.acquireRelease` or `Scope`.
+</Tip>
+
+## Testing Interruption
+
+```typescript
+import { Effect, Fiber, Ref } from "effect"
+import { it } from "@effect/vitest"
+import { assertTrue } from "@effect/vitest/utils"
+
+it.effect("should handle interruption", () =>
+  Effect.gen(function*() {
+    const started = yield* Ref.make(false)
+    const interrupted = yield* Ref.make(false)
+    
+    const fiber = yield* Effect.fork(
+      Effect.gen(function*() {
+        yield* Ref.set(started, true)
+        yield* Effect.never
+      }).pipe(
+        Effect.onInterrupt(() => Ref.set(interrupted, true))
+      )
+    )
+    
+    yield* Ref.get(started).pipe(
+      Effect.repeat({ until: (v) => v })
+    )
+    
+    yield* Fiber.interrupt(fiber)
+    
+    const wasInterrupted = yield* Ref.get(interrupted)
+    assertTrue(wasInterrupted)
+  })
+)
+```

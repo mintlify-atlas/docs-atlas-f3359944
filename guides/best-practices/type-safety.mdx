@@ -1,0 +1,558 @@
+---
+title: 'Type Safety'
+description: 'Master type safety patterns in Effect for robust, maintainable code'
+icon: 'shield-check'
+---
+
+Effect's type system provides powerful guarantees that catch errors at compile time and improve code maintainability.
+
+## Understanding Effect Types
+
+Effect uses three type parameters to track information:
+
+```typescript
+Effect.Effect<Success, Error, Requirements>
+```
+
+- **Success**: The successful result type
+- **Error**: The error type (what can go wrong)
+- **Requirements**: Services this effect depends on
+
+<Tip>
+Think of these as: "What I produce, what can fail, what I need."
+</Tip>
+
+## Type-Safe Error Handling
+
+### Define Specific Error Types
+
+Use discriminated unions for precise error handling.
+
+```typescript
+class UserNotFound {
+  readonly _tag = "UserNotFound"
+  constructor(readonly userId: string) {}
+}
+
+class DatabaseError {
+  readonly _tag = "DatabaseError"
+  constructor(readonly cause: unknown) {}
+}
+
+class ValidationError {
+  readonly _tag = "ValidationError"
+  constructor(readonly errors: ReadonlyArray<string>) {}
+}
+
+type UserError = UserNotFound | DatabaseError | ValidationError
+
+const fetchUser = (id: string): Effect.Effect<User, UserError> =>
+  Effect.gen(function* () {
+    // TypeScript knows all possible errors
+  })
+```
+
+<Warning>
+Avoid using `unknown` or `Error` as error types. Specific error types enable exhaustive pattern matching.
+</Warning>
+
+### Exhaustive Error Handling
+
+```typescript
+const handleUserError = <A>(error: UserError): Effect.Effect<A> =>
+  Effect.gen(function* () {
+    switch (error._tag) {
+      case "UserNotFound":
+        return yield* Effect.log(`User ${error.userId} not found`)
+      case "DatabaseError":
+        return yield* Effect.log(`Database error: ${error.cause}`)
+      case "ValidationError":
+        return yield* Effect.log(`Validation failed: ${error.errors.join(", ")}`)
+    }
+  })
+```
+
+### Catch Specific Errors
+
+```typescript
+const program = fetchUser("123").pipe(
+  Effect.catchTag("UserNotFound", (error) =>
+    Effect.succeed(createGuestUser())
+  ),
+  Effect.catchTag("ValidationError", (error) =>
+    Effect.fail(new InvalidInput(error.errors))
+  ),
+  // DatabaseError propagates to caller
+)
+```
+
+<Tip>
+Use `Effect.catchTag` for type-safe error handling. TypeScript will autocomplete available error tags.
+</Tip>
+
+## Service Type Safety
+
+### Strongly-Typed Services
+
+Define services with explicit interfaces.
+
+```typescript
+import { Context, Effect } from "effect"
+
+class UserRepository extends Context.Tag("@app/UserRepository")<
+  UserRepository,
+  {
+    readonly findById: (id: string) => Effect.Effect<User, UserNotFound>
+    readonly findByEmail: (email: string) => Effect.Effect<User, UserNotFound>
+    readonly save: (user: User) => Effect.Effect<void, DatabaseError>
+    readonly delete: (id: string) => Effect.Effect<void, UserNotFound | DatabaseError>
+  }
+>() {}
+```
+
+### Service Composition
+
+```typescript
+class OrderService extends Context.Tag("@app/OrderService")<
+  OrderService,
+  {
+    readonly create: (
+      userId: string,
+      items: ReadonlyArray<OrderItem>
+    ) => Effect.Effect<Order, UserNotFound | ValidationError | PaymentError>
+  }
+>() {}
+
+const OrderServiceLive = Layer.effect(
+  OrderService,
+  Effect.gen(function* () {
+    const userRepo = yield* UserRepository
+    const paymentService = yield* PaymentService
+
+    return OrderService.of({
+      create: (userId, items) =>
+        Effect.gen(function* () {
+          const user = yield* userRepo.findById(userId)
+          // Type: Effect<User, UserNotFound>
+
+          const validated = yield* validateItems(items)
+          // Type: Effect<OrderItem[], ValidationError>
+
+          const payment = yield* paymentService.charge(user, items)
+          // Type: Effect<Payment, PaymentError>
+
+          return createOrder(user, validated, payment)
+          // Errors are automatically unioned:
+          // UserNotFound | ValidationError | PaymentError
+        })
+    })
+  })
+)
+```
+
+<Tip>
+Effect automatically computes the union of all error types in a composition.
+</Tip>
+
+## Schema-Based Validation
+
+Use Schema for runtime validation with compile-time types.
+
+```typescript
+import { Schema } from "effect"
+
+const UserSchema = Schema.Struct({
+  id: Schema.String,
+  email: Schema.String.pipe(Schema.pattern(/^[^@]+@[^@]+$/)),
+  age: Schema.Number.pipe(Schema.between(0, 150)),
+  role: Schema.Literal("admin", "user", "guest")
+})
+
+type User = Schema.Schema.Type<typeof UserSchema>
+// Inferred: { id: string; email: string; age: number; role: "admin" | "user" | "guest" }
+
+const parseUser = (data: unknown): Effect.Effect<User, ParseError> =>
+  Schema.decode(UserSchema)(data)
+```
+
+### Encode and Decode
+
+```typescript
+const UserDtoSchema = Schema.Struct({
+  id: Schema.String,
+  email: Schema.String,
+  createdAt: Schema.String // ISO date string
+})
+
+const UserSchema = Schema.Struct({
+  id: Schema.String,
+  email: Schema.String,
+  createdAt: Schema.Date
+})
+
+// Transform between representations
+const UserWithTransform = Schema.transform(
+  UserDtoSchema,
+  UserSchema,
+  {
+    decode: (dto) => ({
+      ...dto,
+      createdAt: new Date(dto.createdAt)
+    }),
+    encode: (user) => ({
+      ...user,
+      createdAt: user.createdAt.toISOString()
+    })
+  }
+)
+```
+
+## Branded Types
+
+Create distinct types for values with the same underlying type.
+
+```typescript
+import { Brand } from "effect"
+
+type UserId = string & Brand.Brand<"UserId">
+type Email = string & Brand.Brand<"Email">
+
+const UserId = Brand.nominal<UserId>()
+const Email = Brand.nominal<Email>()
+
+const fetchUser = (
+  id: UserId  // Only accepts UserId, not plain string
+): Effect.Effect<User, UserNotFound> =>
+  Effect.gen(function* () {
+    // ...
+  })
+
+const program = Effect.gen(function* () {
+  const userId = UserId("user-123")
+  const email = Email("test@example.com")
+
+  const user = yield* fetchUser(userId)  // ✓ Works
+  // const user = yield* fetchUser(email)  // ✗ Type error!
+  // const user = yield* fetchUser("123")  // ✗ Type error!
+})
+```
+
+<Warning>
+Branded types prevent mixing logically different values that have the same runtime representation.
+</Warning>
+
+## Refining Types with Filters
+
+```typescript
+import { Schema } from "effect"
+
+const PositiveInt = Schema.Number.pipe(
+  Schema.int(),
+  Schema.positive()
+)
+
+const NonEmptyString = Schema.String.pipe(
+  Schema.minLength(1)
+)
+
+const EmailString = Schema.String.pipe(
+  Schema.pattern(/^[^@]+@[^@]+$/)
+)
+
+type PositiveInt = Schema.Schema.Type<typeof PositiveInt>  // number (but refined)
+```
+
+## Opaque Types for Invariants
+
+Use opaque types to enforce invariants.
+
+```typescript
+import { Schema } from "effect"
+
+export class Email extends Schema.Class<Email>("Email")({
+  value: Schema.String.pipe(
+    Schema.pattern(/^[^@]+@[^@]+$/)
+  )
+}) {
+  static make(email: string): Effect.Effect<Email, ParseError> {
+    return Schema.decode(Email)({ value: email })
+  }
+
+  toString(): string {
+    return this.value
+  }
+}
+
+// Usage
+const program = Effect.gen(function* () {
+  const email = yield* Email.make("user@example.com")
+  // email.value is not directly accessible
+  // Must use email.toString()
+})
+```
+
+## Type-Safe Configuration
+
+```typescript
+import { Config, Effect } from "effect"
+
+const appConfig = Config.all({
+  port: Config.number("PORT").pipe(
+    Config.withDefault(3000)
+  ),
+  database: Config.all({
+    host: Config.string("DB_HOST"),
+    port: Config.number("DB_PORT"),
+    name: Config.string("DB_NAME")
+  }),
+  features: Config.all({
+    enableAuth: Config.boolean("ENABLE_AUTH").pipe(
+      Config.withDefault(true)
+    ),
+    maxUploadSize: Config.number("MAX_UPLOAD_SIZE").pipe(
+      Config.withDefault(10_000_000)
+    )
+  })
+})
+
+type AppConfig = Config.Config.Success<typeof appConfig>
+// Fully inferred config type
+
+const program = Effect.gen(function* () {
+  const config = yield* Effect.config(appConfig)
+  // config.port: number
+  // config.database.host: string
+  // config.features.enableAuth: boolean
+})
+```
+
+## Narrowing Effect Types
+
+### Remove Error Types
+
+```typescript
+const riskyOperation: Effect.Effect<Data, Error1 | Error2> = /* ... */
+
+const safe: Effect.Effect<Data, Error2> = riskyOperation.pipe(
+  Effect.catchTag("Error1", () => Effect.succeed(defaultData))
+)
+// Error1 is removed from error channel
+```
+
+### Remove Requirements
+
+```typescript
+const needsDatabase: Effect.Effect<Data, Error, Database> = /* ... */
+
+const independent: Effect.Effect<Data, Error> = needsDatabase.pipe(
+  Effect.provide(DatabaseLive)
+)
+// Database is removed from requirements
+```
+
+## Generic Effect Functions
+
+Write reusable functions that work with any Effect.
+
+```typescript
+const withRetry = <A, E>(
+  effect: Effect.Effect<A, E>,
+  schedule: Schedule.Schedule<unknown, E, unknown>
+): Effect.Effect<A, E> =>
+  effect.pipe(Effect.retry(schedule))
+
+const withTimeout = <A, E>(
+  effect: Effect.Effect<A, E>,
+  duration: Duration.Duration
+): Effect.Effect<A, E | TimeoutError> =>
+  effect.pipe(
+    Effect.timeout(duration),
+    Effect.flatMap(Option.match({
+      onNone: () => Effect.fail(new TimeoutError()),
+      onSome: Effect.succeed
+    }))
+  )
+```
+
+## Type-Safe Builders
+
+Create fluent, type-safe builders.
+
+```typescript
+class QueryBuilder<A> {
+  constructor(
+    private readonly clauses: ReadonlyArray<string> = []
+  ) {}
+
+  select<B>(fields: ReadonlyArray<keyof B>): QueryBuilder<B> {
+    return new QueryBuilder([
+      ...this.clauses,
+      `SELECT ${fields.join(", ")}`
+    ])
+  }
+
+  from(table: string): QueryBuilder<A> {
+    return new QueryBuilder([
+      ...this.clauses,
+      `FROM ${table}`
+    ])
+  }
+
+  where(condition: string): QueryBuilder<A> {
+    return new QueryBuilder([
+      ...this.clauses,
+      `WHERE ${condition}`
+    ])
+  }
+
+  build(): Effect.Effect<ReadonlyArray<A>, DatabaseError, Database> {
+    return Effect.gen(function* () {
+      const db = yield* Database
+      const sql = this.clauses.join(" ")
+      return yield* db.query(sql)
+    })
+  }
+}
+
+// Usage
+const query = new QueryBuilder()
+  .select<User>(["id", "email", "name"])
+  .from("users")
+  .where("age > 18")
+  .build()
+// Type: Effect<User[], DatabaseError, Database>
+```
+
+## Exhaustiveness Checking
+
+Use TypeScript's exhaustiveness checking for safety.
+
+```typescript
+type AppError =
+  | UserNotFound
+  | ValidationError
+  | DatabaseError
+
+const handleError = (error: AppError): Effect.Effect<void> => {
+  switch (error._tag) {
+    case "UserNotFound":
+      return Effect.log("User not found")
+    case "ValidationError":
+      return Effect.log("Validation failed")
+    case "DatabaseError":
+      return Effect.log("Database error")
+    default:
+      // TypeScript ensures all cases are handled
+      const _exhaustive: never = error
+      return Effect.fail(_exhaustive)
+  }
+}
+```
+
+<Tip>
+The `never` type ensures you handle all union members. Adding a new error type will cause a compile error.
+</Tip>
+
+## Type Inference Best Practices
+
+### Annotate Public APIs
+
+```typescript
+// Good: Explicit return type
+export const fetchUser = (
+  id: string
+): Effect.Effect<User, UserNotFound, Database> =>
+  Effect.gen(function* () {
+    // ...
+  })
+
+// Bad: Inferred type might be too specific
+export const fetchUser = (id: string) =>
+  Effect.gen(function* () {
+    // ...
+  })
+```
+
+### Use Type Helpers
+
+```typescript
+import { Effect } from "effect"
+
+type ExtractSuccess<T> = T extends Effect.Effect<infer A, any, any> ? A : never
+type ExtractError<T> = T extends Effect.Effect<any, infer E, any> ? E : never
+type ExtractRequirements<T> = T extends Effect.Effect<any, any, infer R> ? R : never
+
+type UserEffect = ReturnType<typeof fetchUser>
+
+type UserData = ExtractSuccess<UserEffect>  // User
+type UserError = ExtractError<UserEffect>   // UserNotFound
+type UserDeps = ExtractRequirements<UserEffect>  // Database
+```
+
+## Common Type Safety Patterns
+
+### Safe Array Access
+
+```typescript
+const safeGet = <A>(arr: ReadonlyArray<A>, index: number): Effect.Effect<A, IndexOutOfBounds> =>
+  index >= 0 && index < arr.length
+    ? Effect.succeed(arr[index])
+    : Effect.fail(new IndexOutOfBounds(index))
+```
+
+### Safe JSON Parsing
+
+```typescript
+import { Schema } from "effect"
+
+const parseJson = <A>(
+  json: string,
+  schema: Schema.Schema<A, unknown>
+): Effect.Effect<A, ParseError> =>
+  Effect.try({
+    try: () => JSON.parse(json),
+    catch: (error) => new ParseError(String(error))
+  }).pipe(
+    Effect.flatMap(Schema.decode(schema))
+  )
+```
+
+## Testing Type Safety
+
+```typescript
+import { it } from "@effect/vitest"
+import { Effect } from "effect"
+
+it.effect("should have correct error type", () =>
+  Effect.gen(function* () {
+    const result = yield* fetchUser("123").pipe(
+      Effect.exit
+    )
+
+    if (Exit.isFailure(result)) {
+      const error = result.cause.failures[0]
+      // TypeScript knows error is UserNotFound | DatabaseError
+      if (error._tag === "UserNotFound") {
+        // Narrowed to UserNotFound
+        assert.strictEqual(error.userId, "123")
+      }
+    }
+  })
+)
+```
+
+## Best Practices
+
+1. **Type your errors** - Never use `unknown` or `any` for errors
+2. **Use discriminated unions** - Add `_tag` field to error types
+3. **Brand primitives** - Prevent mixing logically different values
+4. **Validate at boundaries** - Use Schema at API/database boundaries
+5. **Annotate public APIs** - Don't rely on inference for exported functions
+6. **Leverage exhaustiveness** - Let TypeScript ensure complete handling
+7. **Compose types** - Build complex types from simple ones
+
+## Next Steps
+
+- Learn about [Testing Strategies](/guides/best-practices/testing-strategies)
+- Explore [Performance Optimization](/guides/best-practices/performance-optimization)
+- Review [Project Structure](/guides/best-practices/project-structure)

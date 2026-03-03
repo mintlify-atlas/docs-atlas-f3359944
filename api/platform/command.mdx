@@ -1,0 +1,413 @@
+---
+title: Command
+description: Execute system commands and processes
+---
+
+`Command` provides a way to execute system commands and processes from `@effect/platform`.
+
+## Overview
+
+```ts
+import { Command } from "@effect/platform"
+
+type Command = StandardCommand | PipedCommand
+
+interface StandardCommand {
+  readonly _tag: "StandardCommand"
+  readonly command: string
+  readonly args: ReadonlyArray<string>
+  readonly env: HashMap<string, string>
+  readonly cwd: Option<string>
+  readonly shell: boolean | string
+  readonly stdin: Command.Input
+  readonly stdout: Command.Output
+  readonly stderr: Command.Output
+}
+```
+
+## Creating Commands
+
+### make
+
+Create a command.
+
+```ts
+const make: (command: string, ...args: Array<string>) => Command
+```
+
+```ts
+import { Command } from "@effect/platform"
+
+const cmd = Command.make("ls", "-la", "/tmp")
+```
+
+## Executing Commands
+
+### string
+
+Execute and get output as string.
+
+```ts
+const string: {
+  (encoding?: string): (command: Command) => Effect<string, PlatformError, CommandExecutor>
+  (command: Command, encoding?: string): Effect<string, PlatformError, CommandExecutor>
+}
+```
+
+```ts
+import { Command } from "@effect/platform"
+import { Effect } from "effect"
+
+const program = Effect.gen(function* () {
+  const output = yield* Command.string(
+    Command.make("echo", "Hello, World!")
+  )
+  console.log(output) // "Hello, World!\n"
+})
+```
+
+### lines
+
+Execute and get output as lines.
+
+```ts
+const lines: (
+  command: Command,
+  encoding?: string
+) => Effect<Array<string>, PlatformError, CommandExecutor>
+```
+
+```ts
+import { Command } from "@effect/platform"
+import { Effect } from "effect"
+
+const program = Effect.gen(function* () {
+  const lines = yield* Command.lines(
+    Command.make("ls", "-1", "/tmp")
+  )
+  lines.forEach(line => console.log(line))
+})
+```
+
+### stream
+
+Execute and get output as stream.
+
+```ts
+const stream: (
+  command: Command
+) => Stream<Uint8Array, PlatformError, CommandExecutor>
+```
+
+```ts
+import { Command } from "@effect/platform"
+import { Effect, Stream } from "effect"
+
+const program = Effect.gen(function* () {
+  const output = Command.stream(Command.make("cat", "/var/log/app.log"))
+
+  yield* Stream.runForEach(output, (chunk) =>
+    Effect.sync(() => console.log(chunk))
+  )
+})
+```
+
+### streamLines
+
+Execute and get output as stream of lines.
+
+```ts
+const streamLines: (
+  command: Command,
+  encoding?: string
+) => Stream<string, PlatformError, CommandExecutor>
+```
+
+### exitCode
+
+Get the exit code.
+
+```ts
+const exitCode: (
+  self: Command
+) => Effect<ExitCode, PlatformError, CommandExecutor>
+```
+
+```ts
+import { Command } from "@effect/platform"
+import { Effect } from "effect"
+
+const program = Effect.gen(function* () {
+  const code = yield* Command.exitCode(
+    Command.make("test", "-f", "/tmp/file.txt")
+  )
+  console.log(code) // 0 if file exists, non-zero otherwise
+})
+```
+
+### start
+
+Start command and get process handle.
+
+```ts
+const start: (
+  command: Command
+) => Effect<Process, PlatformError, CommandExecutor | Scope>
+```
+
+```ts
+import { Command } from "@effect/platform"
+import { Effect } from "effect"
+
+const program = Effect.scoped(
+  Effect.gen(function* () {
+    const process = yield* Command.start(
+      Command.make("node", "server.js")
+    )
+
+    // Process runs in background
+    // Automatically killed when scope closes
+  })
+)
+```
+
+## Configuration
+
+### env
+
+Set environment variables.
+
+```ts
+const env: {
+  (environment: Record<string, string | undefined>): (self: Command) => Command
+  (self: Command, environment: Record<string, string | undefined>): Command
+}
+```
+
+```ts
+import { Command } from "@effect/platform"
+
+const cmd = Command.make("node", "script.js").pipe(
+  Command.env({ NODE_ENV: "production", API_KEY: "secret" })
+)
+```
+
+### workingDirectory
+
+Set working directory.
+
+```ts
+const workingDirectory: {
+  (cwd: string): (self: Command) => Command
+  (self: Command, cwd: string): Command
+}
+```
+
+```ts
+import { Command } from "@effect/platform"
+
+const cmd = Command.make("npm", "install").pipe(
+  Command.workingDirectory("/path/to/project")
+)
+```
+
+### runInShell
+
+Run command in shell.
+
+```ts
+const runInShell: {
+  (shell: string | boolean): (self: Command) => Command
+  (self: Command, shell: string | boolean): Command
+}
+```
+
+```ts
+import { Command } from "@effect/platform"
+
+// Run in default shell
+const cmd1 = Command.make("echo", "$PATH").pipe(
+  Command.runInShell(true)
+)
+
+// Run in specific shell
+const cmd2 = Command.make("echo", "$PATH").pipe(
+  Command.runInShell("/bin/bash")
+)
+```
+
+## Input/Output
+
+### stdin
+
+Set standard input.
+
+```ts
+const stdin: {
+  (stdin: Command.Input): (self: Command) => Command
+  (self: Command, stdin: Command.Input): Command
+}
+
+type CommandInput = "inherit" | "pipe" | Stream<Uint8Array, PlatformError>
+```
+
+```ts
+import { Command, Stream } from "effect"
+
+const input = Stream.make(
+  new TextEncoder().encode("line 1\n"),
+  new TextEncoder().encode("line 2\n")
+)
+
+const cmd = Command.make("sort").pipe(
+  Command.stdin(input)
+)
+```
+
+### feed
+
+Feed string to stdin.
+
+```ts
+const feed: {
+  (input: string): (self: Command) => Command
+  (self: Command, input: string): Command
+}
+```
+
+```ts
+import { Command } from "@effect/platform"
+
+const cmd = Command.make("wc", "-l").pipe(
+  Command.feed("line 1\nline 2\nline 3")
+)
+```
+
+### stdout
+
+Set standard output.
+
+```ts
+const stdout: {
+  (stdout: Command.Output): (self: Command) => Command
+  (self: Command, stdout: Command.Output): Command
+}
+
+type CommandOutput = "inherit" | "pipe" | Sink<Uint8Array, Uint8Array>
+```
+
+### stderr
+
+Set standard error.
+
+```ts
+const stderr: {
+  (stderr: Command.Output): (self: Command) => Command
+  (self: Command, stderr: Command.Output): Command
+}
+```
+
+## Piping
+
+### pipeTo
+
+Pipe one command to another.
+
+```ts
+const pipeTo: {
+  (into: Command): (self: Command) => Command
+  (self: Command, into: Command): Command
+}
+```
+
+```ts
+import { Command } from "@effect/platform"
+import { Effect } from "effect"
+
+const program = Effect.gen(function* () {
+  const output = yield* Command.string(
+    Command.make("cat", "file.txt").pipe(
+      Command.pipeTo(Command.make("grep", "error")),
+      Command.pipeTo(Command.make("wc", "-l"))
+    )
+  )
+  console.log(`Found ${output.trim()} error lines`)
+})
+```
+
+### flatten
+
+Flatten piped commands into array.
+
+```ts
+const flatten: (
+  self: Command
+) => NonEmptyReadonlyArray<StandardCommand>
+```
+
+## Examples
+
+### Execute Simple Command
+
+```ts
+import { Command } from "@effect/platform"
+import { Effect } from "effect"
+
+const program = Effect.gen(function* () {
+  const output = yield* Command.string(
+    Command.make("git", "status", "--short")
+  )
+  console.log(output)
+})
+```
+
+### Process Output Line by Line
+
+```ts
+import { Command } from "@effect/platform"
+import { Effect, Stream } from "effect"
+
+const program = Effect.gen(function* () {
+  const lines = Command.streamLines(
+    Command.make("tail", "-f", "/var/log/app.log")
+  )
+
+  yield* Stream.runForEach(lines, (line) =>
+    Effect.sync(() => console.log(`[LOG] ${line}`))
+  )
+})
+```
+
+### Complex Pipeline
+
+```ts
+import { Command } from "@effect/platform"
+import { Effect } from "effect"
+
+const program = Effect.gen(function* () {
+  const errorCount = yield* Command.string(
+    Command.make("cat", "app.log").pipe(
+      Command.pipeTo(Command.make("grep", "ERROR")),
+      Command.pipeTo(Command.make("wc", "-l"))
+    )
+  )
+  console.log(`Total errors: ${errorCount.trim()}`)
+})
+```
+
+### With Environment and Working Directory
+
+```ts
+import { Command } from "@effect/platform"
+import { Effect } from "effect"
+
+const program = Effect.gen(function* () {
+  const output = yield* Command.string(
+    Command.make("npm", "test").pipe(
+      Command.env({ NODE_ENV: "test", CI: "true" }),
+      Command.workingDirectory("/path/to/project")
+    )
+  )
+  console.log(output)
+})
+```

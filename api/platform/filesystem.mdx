@@ -1,0 +1,486 @@
+---
+title: FileSystem
+description: Cross-platform file system operations
+---
+
+`FileSystem` provides cross-platform file system operations from `@effect/platform`.
+
+## Overview
+
+```ts
+import { FileSystem } from "@effect/platform"
+
+interface FileSystem {
+  readonly access: (path: string, options?: AccessFileOptions) => Effect<void, PlatformError>
+  readonly copy: (fromPath: string, toPath: string, options?: CopyOptions) => Effect<void, PlatformError>
+  readonly exists: (path: string) => Effect<boolean, PlatformError>
+  readonly makeDirectory: (path: string, options?: MakeDirectoryOptions) => Effect<void, PlatformError>
+  readonly readDirectory: (path: string, options?: ReadDirectoryOptions) => Effect<Array<string>, PlatformError>
+  readonly readFile: (path: string) => Effect<Uint8Array, PlatformError>
+  readonly readFileString: (path: string, encoding?: string) => Effect<string, PlatformError>
+  readonly remove: (path: string, options?: RemoveOptions) => Effect<void, PlatformError>
+  readonly rename: (oldPath: string, newPath: string) => Effect<void, PlatformError>
+  readonly stat: (path: string) => Effect<File.Info, PlatformError>
+  readonly writeFile: (path: string, data: Uint8Array, options?: WriteFileOptions) => Effect<void, PlatformError>
+  readonly writeFileString: (path: string, data: string, options?: WriteFileStringOptions) => Effect<void, PlatformError>
+  // ... and more
+}
+```
+
+## Reading Files
+
+### readFile
+
+Read file as bytes.
+
+```ts
+const readFile: (path: string) => Effect<Uint8Array, PlatformError>
+```
+
+```ts
+import { FileSystem } from "@effect/platform"
+import { Effect } from "effect"
+
+const program = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem
+  const data = yield* fs.readFile("./data.bin")
+  return data
+})
+```
+
+### readFileString
+
+Read file as string.
+
+```ts
+const readFileString: (
+  path: string,
+  encoding?: string
+) => Effect<string, PlatformError>
+```
+
+```ts
+import { FileSystem } from "@effect/platform"
+import { Effect } from "effect"
+
+const program = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem
+  const content = yield* fs.readFileString("./config.json", "utf-8")
+  return JSON.parse(content)
+})
+```
+
+### stream
+
+Read file as a stream.
+
+```ts
+const stream: (
+  path: string,
+  options?: StreamOptions
+) => Stream<Uint8Array, PlatformError>
+```
+
+```ts
+import { FileSystem } from "@effect/platform"
+import { Effect, Stream } from "effect"
+
+const program = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem
+  const stream = fs.stream("./large-file.txt", {
+    chunkSize: FileSystem.Size(64 * 1024) // 64 KB chunks
+  })
+
+  yield* Stream.runForEach(stream, (chunk) =>
+    Effect.sync(() => console.log(`Read ${chunk.length} bytes`))
+  )
+})
+```
+
+## Writing Files
+
+### writeFile
+
+Write bytes to file.
+
+```ts
+const writeFile: (
+  path: string,
+  data: Uint8Array,
+  options?: WriteFileOptions
+) => Effect<void, PlatformError>
+```
+
+```ts
+import { FileSystem } from "@effect/platform"
+import { Effect } from "effect"
+
+const program = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem
+  const data = new TextEncoder().encode("Hello, World!")
+  yield* fs.writeFile("./hello.txt", data)
+})
+```
+
+### writeFileString
+
+Write string to file.
+
+```ts
+const writeFileString: (
+  path: string,
+  data: string,
+  options?: WriteFileStringOptions
+) => Effect<string, PlatformError>
+```
+
+```ts
+import { FileSystem } from "@effect/platform"
+import { Effect } from "effect"
+
+const program = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem
+  yield* fs.writeFileString(
+    "./config.json",
+    JSON.stringify({ name: "app", version: "1.0" }, null, 2)
+  )
+})
+```
+
+### sink
+
+Create a writable sink for a file.
+
+```ts
+const sink: (
+  path: string,
+  options?: SinkOptions
+) => Sink<void, Uint8Array, never, PlatformError>
+```
+
+```ts
+import { FileSystem } from "@effect/platform"
+import { Effect, Stream } from "effect"
+
+const program = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem
+
+  const dataStream = Stream.make(
+    new TextEncoder().encode("Line 1\n"),
+    new TextEncoder().encode("Line 2\n")
+  )
+
+  yield* Stream.run(dataStream, fs.sink("./output.txt"))
+})
+```
+
+## Directories
+
+### makeDirectory
+
+Create a directory.
+
+```ts
+const makeDirectory: (
+  path: string,
+  options?: MakeDirectoryOptions
+) => Effect<void, PlatformError>
+
+interface MakeDirectoryOptions {
+  readonly recursive?: boolean
+  readonly mode?: number
+}
+```
+
+```ts
+import { FileSystem } from "@effect/platform"
+import { Effect } from "effect"
+
+const program = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem
+  yield* fs.makeDirectory("./data/nested/dir", { recursive: true })
+})
+```
+
+### readDirectory
+
+List directory contents.
+
+```ts
+const readDirectory: (
+  path: string,
+  options?: ReadDirectoryOptions
+) => Effect<Array<string>, PlatformError>
+
+interface ReadDirectoryOptions {
+  readonly recursive?: boolean
+}
+```
+
+```ts
+import { FileSystem } from "@effect/platform"
+import { Effect } from "effect"
+
+const program = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem
+
+  const files = yield* fs.readDirectory("./src")
+  console.log(files)
+
+  // Recursive listing
+  const allFiles = yield* fs.readDirectory("./src", { recursive: true })
+  console.log(allFiles)
+})
+```
+
+### remove
+
+Remove files or directories.
+
+```ts
+const remove: (
+  path: string,
+  options?: RemoveOptions
+) => Effect<void, PlatformError>
+
+interface RemoveOptions {
+  readonly recursive?: boolean
+  readonly force?: boolean
+}
+```
+
+```ts
+import { FileSystem } from "@effect/platform"
+import { Effect } from "effect"
+
+const program = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem
+
+  // Remove file
+  yield* fs.remove("./temp.txt")
+
+  // Remove directory recursively
+  yield* fs.remove("./temp-dir", { recursive: true })
+
+  // Ignore errors if path doesn't exist
+  yield* fs.remove("./maybe-exists.txt", { force: true })
+})
+```
+
+## Temporary Files
+
+### makeTempDirectory
+
+```ts
+const makeTempDirectory: (
+  options?: MakeTempDirectoryOptions
+) => Effect<string, PlatformError>
+
+interface MakeTempDirectoryOptions {
+  readonly directory?: string
+  readonly prefix?: string
+}
+```
+
+```ts
+import { FileSystem } from "@effect/platform"
+import { Effect } from "effect"
+
+const program = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem
+
+  const tempDir = yield* fs.makeTempDirectory({ prefix: "myapp-" })
+  console.log(`Created temp dir: ${tempDir}`)
+
+  // Use the temp directory...
+})
+```
+
+### makeTempDirectoryScoped
+
+Auto-cleanup on scope exit.
+
+```ts
+const makeTempDirectoryScoped: (
+  options?: MakeTempDirectoryOptions
+) => Effect<string, PlatformError, Scope>
+```
+
+```ts
+import { FileSystem } from "@effect/platform"
+import { Effect } from "effect"
+
+const program = Effect.scoped(
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem
+
+    const tempDir = yield* fs.makeTempDirectoryScoped()
+
+    // Directory automatically deleted when scope closes
+    yield* fs.writeFileString(`${tempDir}/data.txt`, "temp data")
+  })
+)
+```
+
+### makeTempFile
+
+```ts
+const makeTempFile: (
+  options?: MakeTempFileOptions
+) => Effect<string, PlatformError>
+
+interface MakeTempFileOptions {
+  readonly directory?: string
+  readonly prefix?: string
+  readonly suffix?: string
+}
+```
+
+### makeTempFileScoped
+
+```ts
+const makeTempFileScoped: (
+  options?: MakeTempFileOptions
+) => Effect<string, PlatformError, Scope>
+```
+
+## File Information
+
+### stat
+
+Get file metadata.
+
+```ts
+const stat: (path: string) => Effect<File.Info, PlatformError>
+
+interface File.Info {
+  readonly type: "File" | "Directory" | "SymbolicLink"
+  readonly mtime: Option<Date>
+  readonly atime: Option<Date>
+  readonly birthtime: Option<Date>
+  readonly size: bigint
+}
+```
+
+```ts
+import { FileSystem } from "@effect/platform"
+import { Effect } from "effect"
+
+const program = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem
+
+  const info = yield* fs.stat("./data.txt")
+
+  console.log(`Type: ${info.type}`)
+  console.log(`Size: ${info.size} bytes`)
+})
+```
+
+### exists
+
+Check if path exists.
+
+```ts
+const exists: (path: string) => Effect<boolean, PlatformError>
+```
+
+```ts
+import { FileSystem } from "@effect/platform"
+import { Effect } from "effect"
+
+const program = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem
+
+  const fileExists = yield* fs.exists("./config.json")
+
+  if (fileExists) {
+    const content = yield* fs.readFileString("./config.json")
+  }
+})
+```
+
+## File Operations
+
+### copy
+
+Copy files or directories.
+
+```ts
+const copy: (
+  fromPath: string,
+  toPath: string,
+  options?: CopyOptions
+) => Effect<void, PlatformError>
+
+interface CopyOptions {
+  readonly overwrite?: boolean
+  readonly preserveTimestamps?: boolean
+}
+```
+
+### rename
+
+Rename/move files.
+
+```ts
+const rename: (
+  oldPath: string,
+  newPath: string
+) => Effect<void, PlatformError>
+```
+
+### link, symlink
+
+Create hard links and symbolic links.
+
+```ts
+const link: (fromPath: string, toPath: string) => Effect<void, PlatformError>
+const symlink: (fromPath: string, toPath: string) => Effect<void, PlatformError>
+const readLink: (path: string) => Effect<string, PlatformError>
+```
+
+## Size Helpers
+
+```ts
+import { FileSystem } from "@effect/platform"
+
+const size = FileSystem.Size(1024) // 1024 bytes
+
+const kb = FileSystem.KiB(64) // 64 KiB
+const mb = FileSystem.MiB(10) // 10 MiB
+const gb = FileSystem.GiB(2) // 2 GiB
+const tb = FileSystem.TiB(1) // 1 TiB
+const pb = FileSystem.PiB(1) // 1 PiB
+```
+
+## File Watching
+
+### watch
+
+Watch for file system changes.
+
+```ts
+const watch: (
+  path: string,
+  options?: WatchOptions
+) => Stream<WatchEvent, PlatformError>
+
+interface WatchOptions {
+  readonly recursive?: boolean
+}
+```
+
+```ts
+import { FileSystem } from "@effect/platform"
+import { Effect, Stream } from "effect"
+
+const program = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem
+
+  const watcher = fs.watch("./src", { recursive: true })
+
+  yield* Stream.runForEach(watcher, (event) =>
+    Effect.sync(() => console.log(`File changed: ${event}`)
+  ))
+})
+```

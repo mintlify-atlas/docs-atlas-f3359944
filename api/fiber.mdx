@@ -1,0 +1,281 @@
+---
+title: Fiber
+---
+
+A fiber is a lightweight thread of execution that never consumes more than a whole thread (but may consume much less, depending on contention and asynchronicity). Fibers are spawned by forking effects, which run concurrently with the parent effect.
+
+Fibers can be joined, yielding their result to other fibers, or interrupted, which terminates the fiber safely releasing all resources.
+
+## Type
+
+```typescript
+interface Fiber<out A, out E = never> extends Effect.Effect<A, E>
+```
+
+A `Fiber<A, E>` represents a computation that may succeed with a value of type `A` or fail with an error of type `E`.
+
+## RuntimeFiber
+
+```typescript
+interface RuntimeFiber<out A, out E = never> extends Fiber<A, E>
+```
+
+A runtime fiber that is executing an effect. Runtime fibers have an identity and a trace.
+
+## Creating Fibers
+
+### fork
+
+Forks an effect into a new fiber.
+
+```typescript
+import { Effect } from "effect"
+
+const program = Effect.gen(function* () {
+  const fiber = yield* Effect.fork(Effect.succeed(42))
+  const result = yield* Fiber.join(fiber)
+  console.log(result) // 42
+})
+```
+
+### succeed
+
+Creates a fiber that has already succeeded with a value.
+
+```typescript
+const succeed: <A>(value: A) => Fiber<A>
+```
+
+### fail
+
+Creates a fiber that has already failed with an error.
+
+```typescript
+const fail: <E>(error: E) => Fiber<never, E>
+```
+
+### done
+
+Creates a fiber that is done with the specified `Exit` value.
+
+```typescript
+const done: <A, E>(exit: Exit.Exit<A, E>) => Fiber<A, E>
+```
+
+## Awaiting Fibers
+
+### await
+
+Awaits the fiber, suspending the awaiting fiber until the result has been determined.
+
+```typescript
+import { Effect, Fiber } from "effect"
+
+const program = Effect.gen(function* () {
+  const fiber = yield* Effect.fork(Effect.succeed("hello"))
+  const exit = yield* Fiber.await(fiber)
+  console.log(exit) // Exit.succeed("hello")
+})
+```
+
+### join
+
+Joins the fiber, suspending until the result is determined. Attempting to join a fiber that has erred will result in a catchable error.
+
+```typescript
+import { Effect, Fiber } from "effect"
+
+const program = Effect.gen(function* () {
+  const fiber = yield* Effect.fork(Effect.succeed(100))
+  const result = yield* Fiber.join(fiber)
+  console.log(result) // 100
+})
+```
+
+### joinAll
+
+Joins all fibers, awaiting their successful completion.
+
+```typescript
+const joinAll: <A, E>(fibers: Iterable<Fiber<A, E>>) => Effect.Effect<Array<A>, E>
+```
+
+### poll
+
+Tentatively observes the fiber, but returns immediately if not already done.
+
+```typescript
+const poll: <A, E>(self: Fiber<A, E>) => Effect.Effect<Option.Option<Exit.Exit<A, E>>>
+```
+
+## Interrupting Fibers
+
+### interrupt
+
+Interrupts the fiber. If the fiber has already exited, the effect resumes immediately.
+
+```typescript
+import { Effect, Fiber } from "effect"
+
+const program = Effect.gen(function* () {
+  const fiber = yield* Effect.fork(Effect.never)
+  const exit = yield* Fiber.interrupt(fiber)
+  // fiber is interrupted
+})
+```
+
+### interruptFork
+
+Interrupts the fiber in a separate daemon fiber, returning immediately without waiting.
+
+```typescript
+const interruptFork: <A, E>(self: Fiber<A, E>) => Effect.Effect<void>
+```
+
+### interruptAll
+
+Interrupts all fibers, awaiting their interruption.
+
+```typescript
+const interruptAll: (fibers: Iterable<Fiber<any, any>>) => Effect.Effect<void>
+```
+
+## Fiber Composition
+
+### zip
+
+Zips two fibers together, producing a tuple of their outputs.
+
+```typescript
+import { Effect, Fiber } from "effect"
+
+const program = Effect.gen(function* () {
+  const fiber1 = yield* Effect.fork(Effect.succeed(1))
+  const fiber2 = yield* Effect.fork(Effect.succeed("a"))
+  const combined = Fiber.zip(fiber1, fiber2)
+  const result = yield* Fiber.join(combined)
+  console.log(result) // [1, "a"]
+})
+```
+
+### zipWith
+
+Zips two fibers with a combiner function.
+
+```typescript
+const zipWith: {
+  <B, E2, A, C>(that: Fiber<B, E2>, f: (a: A, b: B) => C): <E>(self: Fiber<A, E>) => Fiber<C, E2 | E>
+  <A, E, B, E2, C>(self: Fiber<A, E>, that: Fiber<B, E2>, f: (a: A, b: B) => C): Fiber<C, E | E2>
+}
+```
+
+### orElse
+
+Returns a fiber that prefers `this` fiber, but falls back to `that` one when `this` fails.
+
+```typescript
+const orElse: {
+  <A2, E2>(that: Fiber<A2, E2>): <A, E>(self: Fiber<A, E>) => Fiber<A2 | A, E2 | E>
+  <A, E, A2, E2>(self: Fiber<A, E>, that: Fiber<A2, E2>): Fiber<A | A2, E | E2>
+}
+```
+
+## Fiber Inspection
+
+### id
+
+Gets the identity of the fiber.
+
+```typescript
+const id: <A, E>(self: Fiber<A, E>) => FiberId.FiberId
+```
+
+### status
+
+Gets the `FiberStatus` of a `RuntimeFiber`.
+
+```typescript
+const status: <A, E>(self: RuntimeFiber<A, E>) => Effect.Effect<FiberStatus.FiberStatus>
+```
+
+### children
+
+Retrieves the immediate children of the fiber.
+
+```typescript
+const children: <A, E>(self: Fiber<A, E>) => Effect.Effect<Array<RuntimeFiber<any, any>>>
+```
+
+### roots
+
+Returns all root fibers.
+
+```typescript
+const roots: Effect.Effect<Array<RuntimeFiber<any, any>>>
+```
+
+## Mapping Fibers
+
+### map
+
+Maps over the value the fiber computes.
+
+```typescript
+const map: {
+  <A, B>(f: (a: A) => B): <E>(self: Fiber<A, E>) => Fiber<B, E>
+  <A, E, B>(self: Fiber<A, E>, f: (a: A) => B): Fiber<B, E>
+}
+```
+
+### mapEffect
+
+Effectually maps over the value the fiber computes.
+
+```typescript
+const mapEffect: {
+  <A, A2, E2>(f: (a: A) => Effect.Effect<A2, E2>): <E>(self: Fiber<A, E>) => Fiber<A2, E2 | E>
+  <A, E, A2, E2>(self: Fiber<A, E>, f: (a: A) => Effect.Effect<A2, E2>): Fiber<A2, E | E2>
+}
+```
+
+## Scoped Fibers
+
+### scoped
+
+Converts a fiber into a scoped effect. The fiber is interrupted when the scope is closed.
+
+```typescript
+import { Effect, Fiber, Scope } from "effect"
+
+const program = Effect.scoped(
+  Effect.gen(function* () {
+    const fiber = yield* Effect.fork(Effect.never)
+    const scoped = yield* Fiber.scoped(fiber)
+    // fiber will be interrupted when scope closes
+  })
+)
+```
+
+## Practical Example
+
+```typescript
+import { Effect, Fiber } from "effect"
+
+const fetchUser = (id: number) =>
+  Effect.gen(function* () {
+    yield* Effect.sleep("100 millis")
+    return { id, name: `User ${id}` }
+  })
+
+const program = Effect.gen(function* () {
+  // Fork multiple fibers
+  const fiber1 = yield* Effect.fork(fetchUser(1))
+  const fiber2 = yield* Effect.fork(fetchUser(2))
+  const fiber3 = yield* Effect.fork(fetchUser(3))
+
+  // Join all fibers
+  const users = yield* Fiber.joinAll([fiber1, fiber2, fiber3])
+  console.log(users)
+  // [{ id: 1, name: "User 1" }, { id: 2, name: "User 2" }, { id: 3, name: "User 3" }]
+})
+```
